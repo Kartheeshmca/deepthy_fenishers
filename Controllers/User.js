@@ -72,8 +72,8 @@ export const login = async (req, res) => {
   try {
     const { name, phone, password } = req.body;
 
-    if (!name || !phone || !password) {
-      return res.status(400).json({ message: "Name, phone, and password are required" });
+    if (!password) {
+      return res.status(400).json({ message: "password are required" });
     }
 
     // Find user by both name and phone (case-insensitive for name)
@@ -89,7 +89,7 @@ export const login = async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { id: user._id, role: user.role, name: user.name },
+      { id: user._id, role: user.role, name: user.phone },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
