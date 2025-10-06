@@ -34,8 +34,8 @@ const capitalizeName = (name) => {
 // User schema
 const userSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, trim: true, set: capitalizeName },
-    phone: { type: String, required: true, unique: true, match: [/^\d{10}$/, "Phone must be 10 digits"] },
+    name: { type: String, trim: true, set: capitalizeName },
+    phone: { type: String, unique: true, match: [/^\d{10}$/, "Phone must be 10 digits"] },
     password: { type: String, required: true },
     role: { type: String, enum: ["owner", "admin", "user"], default: "user" },
   },
