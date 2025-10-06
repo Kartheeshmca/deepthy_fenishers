@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>User Management</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; }
+    input, button { padding: 8px; margin: 5px 0; width: 100%; }
+    .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 16px; border-radius: 6px; }
+    pre { background:#f7f7f7; padding:10px; }
+  </style>
+</head>
+<body>
+  <h2>User Management Quick Demo</h2>
+
+  <div class="box">
+    <h3>Create Owner (only once)</h3>
+    <input id="ownerName" placeholder="Owner name (eg. John Doe)" />
+    <input id="ownerPhone" placeholder="10 digit phone" />
+    <input id="ownerPassword" placeholder="Password (leave empty to auto-generate)" />
+    <button onclick="createOwner()">Create Owner</button>
+    <div id="ownerResult"></div>
+  </div>
+
+  <div class="box">
+    <h3>Login</h3>
+    <input id="loginName" placeholder="Name (case-insensitive)" />
+    <input id="loginPassword" placeholder="Password" />
+    <button onclick="login()">Login</button>
+    <div id="loginResult"></div>
+  </div>
+
+  <script>
+    async function createOwner() {
+      const name = document.getElementById('ownerName').value;
+      const phone = document.getElementById('ownerPhone').value;
+      const password = document.getElementById('ownerPassword').value;
+      const res = await fetch('/api/users/create-owner', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name, phone, password: password || undefined })
+      });
+      const json = await res.json();
+      document.getElementById('ownerResult').innerText = JSON.stringify(json, null, 2);
+    }
+
+    async function login() {
+      const name = document.getElementById('loginName').value;
+      const password = document.getElementById('loginPassword').value;
+      const res = await fetch('/api/users/login', {
+        method:'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name, password })
+      });
+      const json = await res.json();
+      document.getElementById('loginResult').innerText = JSON.stringify(json, null, 2);
+      // if token returned, store to localStorage for quick testing
+      if (json.token) localStorage.setItem('token', json.token);
+    }
+  </script>
+</body>
+</html>
