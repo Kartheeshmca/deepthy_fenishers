@@ -27,7 +27,7 @@ App.use(express.static(path.join(__dirname, "public")));
 // ===== MongoDB Connection =====
 mongoose.set("strictQuery", false);
 mongoose
-  .connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/deepthyserver")
+  .connect(process.env.MONGO_URI || "mongodb+srv://kartheeshwaran:kartheeshwaran@cluster0.toj6q.mongodb.net/ecommerce")
   .then(async () => {
     console.log("Connected to MongoDB...");
   })
@@ -41,3 +41,4 @@ App.use("/api/fabric", fabricRoutes);
 // ===== Start Server =====
 const port = process.env.PORT || 7390;
 App.listen(port, () => console.log("Server running on port " + port));
+
