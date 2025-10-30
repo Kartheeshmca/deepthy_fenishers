@@ -15,8 +15,6 @@ const generateAutoPassword = (name, phone) => {
 // Create owner if none exists
 export const createOwnerIfNone = async (req, res) => {
   try {
-    const existingOwner = await User.findOne({ role: "owner" });
-    if (existingOwner) return res.status(400).json({ message: "Owner already exists" });
 
     const { name, phone, password } = req.body;
     if (!name || !phone) return res.status(400).json({ message: "Name and phone required" });
