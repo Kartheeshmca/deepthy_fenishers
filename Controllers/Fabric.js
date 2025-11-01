@@ -8,7 +8,8 @@ const addHistory = (fabric, action, changes = {}, user = "System") => {
 // ✅ Start Fabric Process
 export const createFabricProcess = async (req, res) => {
   try {
-    const { dcNo, brandName, qty, color, machineNo, rate, A_D, user } = req.body;
+    const { dcNo, brandName, qty, color, machineNo, rate, A_D } = req.body;
+    const user = req.user.name;
 
     if (!dcNo || !brandName || qty == null || qty < 0 || !color || !machineNo || rate == null || rate < 0) {
       return res.status(400).json({ message: "Invalid or missing required fields" });
@@ -41,40 +42,30 @@ export const createFabricProcess = async (req, res) => {
 // ✅ End Fabric Process
 export const endFabricProcess = async (req, res) => {
   try {
-    const { dcNo, openingReading, closingReading, lotWeight, chemicals = [], dyes = [], user } = req.body;
+    const { dcNo, openingReading, closingReading, lotWeight, chemicals = [], dyes = [] } = req.body;
+    const user = req.user.name;
 
     if (!dcNo || openingReading == null || closingReading == null || lotWeight == null) {
       return res.status(400).json({ message: "All required fields must be provided" });
     }
-    if (openingReading < closingReading) {
-      return res.status(400).json({ message: "Opening reading cannot be less than closing reading" });
-    }
+    if (closingReading < openingReading) return res.status(400).json({ message: "Closing reading cannot be less than opening reading" });
 
     const fabric = await FabricProcess.findOne({ dcNo });
     if (!fabric) return res.status(404).json({ message: "Fabric process not found" });
     if (!fabric.startTime) return res.status(400).json({ message: "Process not started yet" });
 
     const changes = {};
-
-    // Update readings and lotWeight
     fabric.openingReading = openingReading;
     fabric.closingReading = closingReading;
     fabric.lotWeight = lotWeight;
     fabric.endTime = new Date();
 
-    if (fabric.endTime < fabric.startTime) {
-      return res.status(400).json({ message: "End time cannot be before start time" });
-    }
-
-    // Running time in hours (rounded 2 decimals)
     fabric.runningTime = +((fabric.endTime - fabric.startTime) / (1000 * 60 * 60)).toFixed(2);
+    fabric.waterCost = +(((closingReading - openingReading) / 100) * lotWeight * 0.4).toFixed(2);
 
-    // Water cost (rounded)
-    fabric.waterCost = +(((openingReading - closingReading) / 100) * lotWeight * 0.4).toFixed(2);
     changes.readings = { openingReading, closingReading, lotWeight };
     changes.waterCost = fabric.waterCost;
 
-    // Validate chemicals
     for (let chem of chemicals) {
       if (!chem.name || chem.qty == null || chem.qty < 0 || chem.cost == null || chem.cost < 0) {
         return res.status(400).json({ message: "Invalid chemical entry" });
@@ -83,7 +74,6 @@ export const endFabricProcess = async (req, res) => {
     fabric.chemical = chemicals;
     changes.chemical = chemicals;
 
-    // Validate dyes
     for (let dye of dyes) {
       if (!dye.name || dye.qty == null || dye.qty < 0 || dye.cost == null || dye.cost < 0) {
         return res.status(400).json({ message: "Invalid dye entry" });
@@ -92,18 +82,42 @@ export const endFabricProcess = async (req, res) => {
     fabric.dyes = dyes;
     changes.dyes = dyes;
 
-    // Total cost
     const chemicalCost = chemicals.reduce((sum, c) => sum + c.cost, 0);
     const dyeCost = dyes.reduce((sum, d) => sum + d.cost, 0);
     fabric.totalCost = +(fabric.rate * fabric.qty + chemicalCost + dyeCost + fabric.waterCost).toFixed(2);
     changes.totalCost = fabric.totalCost;
 
     fabric.status = "Completed";
-
     addHistory(fabric, "Process Ended", changes, user);
 
     await fabric.save();
     res.status(200).json({ message: "Fabric process completed", fabric });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// ✅ Update Fabric Process
+export const updateFabricProcess = async (req, res) => {
+  try {
+    const { dcNo } = req.params;
+    const updates = req.body;
+    const user = req.user.name;
+
+    const fabric = await FabricProcess.findOne({ dcNo });
+    if (!fabric) return res.status(404).json({ message: "Fabric process not found" });
+
+    const changes = {};
+    for (let key in updates) {
+      if (updates[key] !== undefined && key in fabric) {
+        changes[key] = { before: fabric[key], after: updates[key] };
+        fabric[key] = updates[key];
+      }
+    }
+
+    addHistory(fabric, "Process Updated", changes, user);
+    await fabric.save();
+    res.status(200).json({ message: "Fabric process updated", fabric });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -119,7 +133,7 @@ export const getAllFabricProcesses = async (req, res) => {
   }
 };
 
-// ✅ Get by DC No
+// ✅ Get Fabric Process by DC No
 export const getFabricProcessByDcNo = async (req, res) => {
   try {
     const { dcNo } = req.params;
@@ -131,34 +145,92 @@ export const getFabricProcessByDcNo = async (req, res) => {
   }
 };
 
-// ✅ Update Fabric Process
-export const updateFabricProcess = async (req, res) => {
-  try {
-    const { dcNo } = req.params;
-    const updates = req.body;
-
-    const fabric = await FabricProcess.findOne({ dcNo });
-    if (!fabric) return res.status(404).json({ message: "Fabric process not found" });
-
-    const changes = { ...updates };
-    addHistory(fabric, "Process Updated", changes, updates.user || "System");
-
-    Object.assign(fabric, updates);
-
-    await fabric.save();
-    res.status(200).json({ message: "Fabric process updated", fabric });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-};
-
 // ✅ Delete Fabric Process
 export const deleteFabricProcess = async (req, res) => {
   try {
     const { dcNo } = req.params;
     const fabric = await FabricProcess.findOneAndDelete({ dcNo });
     if (!fabric) return res.status(404).json({ message: "Fabric process not found" });
-    res.status(200).json({ message: "Fabric process deleted" });
+    res.status(200).json({ message: "Fabric process deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// ✅ Search Fabric Processes
+export const searchFabricProcesses = async (req, res) => {
+  try {
+    const { dcNo, brandName, color, status, dateFrom, dateTo } = req.query;
+    const filter = {};
+
+    if (dcNo) filter.dcNo = { $regex: dcNo, $options: "i" };
+    if (brandName) filter.brandName = { $regex: brandName, $options: "i" };
+    if (color) filter.color = { $regex: color, $options: "i" };
+    if (status) filter.status = status;
+
+    if (dateFrom || dateTo) {
+      filter.date = {};
+      if (dateFrom) filter.date.$gte = new Date(dateFrom);
+      if (dateTo) filter.date.$lte = new Date(dateTo);
+    }
+
+    const fabrics = await FabricProcess.find(filter).sort({ date: -1 });
+    res.status(200).json(fabrics);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+// ✅ Get All Fabric Processes with Pagination
+export const getFabricProcessesPaginated = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const [fabrics, total] = await Promise.all([
+      FabricProcess.find().sort({ date: -1 }).skip(skip).limit(limit),
+      FabricProcess.countDocuments()
+    ]);
+
+    res.status(200).json({
+      fabrics,
+      pagination: {
+        current: page,
+        pages: Math.ceil(total / limit),
+        total
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// ✅ Export Fabric Processes as CSV
+export const exportFabricProcessesCSV = async (req, res) => {
+  try {
+    const fabrics = await FabricProcess.find().sort({ date: -1 });
+
+    if (!fabrics.length) return res.status(404).json({ message: "No fabric processes found" });
+
+    const csvData = fabrics.map(fabric => ({
+      DC_No: fabric.dcNo,
+      Date: fabric.date ? fabric.date.toISOString().split('T')[0] : '',
+      Brand: fabric.brandName,
+      Quantity: fabric.qty,
+      Color: fabric.color,
+      Machine: fabric.machineNo,
+      Status: fabric.status,
+      Total_Cost: fabric.totalCost
+    }));
+
+    const csvString = [
+      Object.keys(csvData[0]).join(','), // headers
+      ...csvData.map(row => Object.values(row).join(',')) // rows
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=fabric-processes.csv');
+    res.send(csvString);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
