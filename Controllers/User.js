@@ -1,6 +1,9 @@
 // Controllers/userController.js
 import User from "../Models/User.js";
 import jwt from "jsonwebtoken";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 /**
  * Helper to generate auto password: first 3 letters of name (lowercased) + last 4 digits of phone
@@ -15,6 +18,8 @@ const generateAutoPassword = (name, phone) => {
 // Create owner if none exists
 export const createOwnerIfNone = async (req, res) => {
   try {
+    // const existingOwner = await User.findOne({ role: "owner" });
+    // if (existingOwner) return res.status(400).json({ message: "Owner already exists" });
 
     const { name, phone, password } = req.body;
     if (!name || !phone) return res.status(400).json({ message: "Name and phone required" });
@@ -66,18 +71,22 @@ export const createUser = async (req, res) => {
 
 // Login
 // Login (requires name, phone, and password)
+
+
 export const login = async (req, res) => {
   try {
-    const { name, phone, password } = req.body;
+    const { identifier, password } = req.body; // identifier = phone OR name
 
-    if (!password) {
-      return res.status(400).json({ message: "password are required" });
+    if (!identifier || !password) {
+      return res.status(400).json({ message: "Phone/Name and password are required" });
     }
 
-    // Find user by both name and phone (case-insensitive for name)
+    // Find user by phone OR name
     const user = await User.findOne({
-      name: new RegExp("^" + name + "$", "i"),
-      phone: phone,
+      $or: [
+        { phone: identifier },
+        { name: new RegExp("^" + identifier + "$", "i") }, // case-insensitive exact match
+      ],
     });
 
     if (!user) return res.status(401).json({ message: "Invalid credentials" });
@@ -85,10 +94,9 @@ export const login = async (req, res) => {
     const isMatch = await user.comparePassword(password);
     if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
 
-    // Generate JWT token
     const token = jwt.sign(
-      { id: user._id, role: user.role, name: user.phone },
-      process.env.JWT_SECRET,
+      { id: user._id, role: user.role, name: user.name },
+      process.env.JWT_SECRET || "temporarySecret",
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
@@ -104,9 +112,11 @@ export const login = async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
 
 
 // Get all users (owner/admin protected)
@@ -289,5 +299,3 @@ export const viewUserPassword = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
-
-
