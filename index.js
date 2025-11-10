@@ -27,7 +27,7 @@ App.use(express.static(path.join(__dirname, "public")));
 // ===== MongoDB Connection =====
 mongoose.set("strictQuery", false);
 mongoose
-  .connect("mongodb+srv://kartheeshwaran:kartheeshwaran@cluster0.toj6q.mongodb.net/deepthy_fenishers")
+  .connect(process.env.MONGO_URI)
   .then(async () => {
     console.log("Connected to MongoDB...");
   })
