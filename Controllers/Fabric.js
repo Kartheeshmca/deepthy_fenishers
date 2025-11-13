@@ -177,13 +177,19 @@ export const updateFabricProcess = async (req, res) => {
 // ✅ Get All Fabric Processes
 export const getAllFabricProcesses = async (req, res) => {
   try {
-    const fabrics = await FabricProcess.find().sort({ createdAt: -1 });
+    const { role, name } = req.user; // get from auth middleware
+    let query = {};
+
+    if (role === "user") {
+      query.user = name; // ✅ only show records created by this user
+    }
+
+    const fabrics = await FabricProcess.find(query).sort({ createdAt: -1 });
     res.status(200).json(fabrics);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
-
 // ✅ Get All Cycles by DC No
 export const getFabricProcessByDcNo = async (req, res) => {
   try {
@@ -388,3 +394,4 @@ export const getFabricByUser = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
