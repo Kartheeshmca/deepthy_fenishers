@@ -51,7 +51,7 @@ itemSchema.pre("save", async function (next) {
 // 💰 Billing Schema
 const billingSchema = new mongoose.Schema(
   {
-    invoiceNo: { type: String},
+    invoiceNo: { type: String, unique: true },
     date: { type: Date, default: Date.now },
     customerName: { type: String, required: true, trim: true },
     customerAddress: { type: String, required: true },
@@ -93,7 +93,8 @@ const billingSchema = new mongoose.Schema(
 );
 
 // 🧮 Auto-calculate totals
-billingSchema.pre("save", function (next) {
+// 🧮 Auto-calculate totals
+billingSchema.pre("save", async function (next) {
   try {
     // Step 1: Calculate total amount from items
     this.totalAmount = this.items.reduce(
@@ -114,10 +115,20 @@ billingSchema.pre("save", function (next) {
     this.roundOff = +(rounded - gross).toFixed(2);
     this.grandTotal = rounded;
 
-    // Step 4: Auto-generate invoice number if not provided
+    // ✅ Step 4: Auto-generate invoice number (Format: D/0001, D/0002, ...)
     if (!this.invoiceNo) {
-      const randomNum = Math.floor(Math.random() * 9000) + 1000;
-      this.invoiceNo = `INV-${new Date().getFullYear()}-${randomNum}`;
+      const Billing = mongoose.model("Billing");
+
+      // Find the latest invoice number
+      const lastBill = await Billing.findOne({}, {}, { sort: { createdAt: -1 } });
+
+      let nextNumber = 1;
+      if (lastBill && lastBill.invoiceNo) {
+        const match = lastBill.invoiceNo.match(/D\/(\d+)/);
+        if (match) nextNumber = parseInt(match[1]) + 1;
+      }
+
+      this.invoiceNo = `D/${nextNumber.toString().padStart(4, "0")}`;
     }
 
     next();
