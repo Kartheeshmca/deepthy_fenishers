@@ -34,10 +34,10 @@ router.get("/export/csv", protect, roleCheck(["owner", "admin"]), exportFabricPr
 /* ================================
    🔹 SINGLE PROCESS OPERATIONS
    ================================ */
-  router.get("/user/:username", protect, roleCheck(["owner", "admin"]), getFabricByUser);
-router.get("/:dcNo", protect, roleCheck(["owner", "admin", "user"]), getFabricProcessByDcNo);
-router.put("/update/:dcNo", protect, roleCheck(["owner", "admin"]), updateFabricProcess);
-router.delete("/delete/:dcNo", protect, roleCheck(["owner", "admin"]), deleteFabricProcess);
+router.get("/user/:username", protect, roleCheck(["owner","admin","user"]), getFabricByUser);
+router.get("/:dcNo", protect, roleCheck(["owner","admin","user"]), getFabricProcessByDcNo);
+router.put("/update/:dcNo", protect, roleCheck(["owner","admin"]), updateFabricProcess);
+router.delete("/delete/:dcNo", protect, roleCheck(["owner","admin"]), deleteFabricProcess);
 
 
 export default router;
