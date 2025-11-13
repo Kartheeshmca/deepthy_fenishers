@@ -1,6 +1,7 @@
 import Billing from "../Models/Billing.js";
 import FabricProcess from "../Models/Fabric.js";
 
+
 // ✅ Create Bill
 export const createBill = async (req, res) => {
   try {
@@ -10,16 +11,16 @@ export const createBill = async (req, res) => {
     const enrichedItems = await Promise.all(
       items.map(async (item) => {
         const fp = await FabricProcess.findOne({ dcNo: item.dcNo });
-        if (fp) {
-          return {
-            ...item,
-            color: fp.color || item.color, // only color
-            lotWeight: fp.lotWeight || item.lotWeight, // only lotWeight
-            rate: fp.rate || item.rate, // only rate
-            amount: (fp.lotWeight || item.lotWeight) * (fp.rate || item.rate),
-          };
-        }
-        return item;
+
+        // Safely extract values (convert to numbers or fallback to 0)
+        const color = fp?.color || item.color || "";
+        const lotWeight = Number(fp?.lotWeight ?? item.lotWeight ?? 0);
+        const rate = Number(fp?.rate ?? item.rate ?? 0);
+
+        // Calculate amount safely
+        const amount = !isNaN(lotWeight * rate) ? lotWeight * rate : 0;
+
+        return { ...item, color, lotWeight, rate, amount };
       })
     );
 
@@ -40,6 +41,7 @@ export const createBill = async (req, res) => {
     });
   }
 };
+
 
 // ✅ Get All Bills
 export const getAllBills = async (req, res) => {
