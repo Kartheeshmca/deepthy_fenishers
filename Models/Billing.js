@@ -51,7 +51,7 @@ itemSchema.pre("save", async function (next) {
 // 💰 Billing Schema
 const billingSchema = new mongoose.Schema(
   {
-    invoiceNo: { type: String, unique: true },
+    invoiceNo: { type: String},
     date: { type: Date, default: Date.now },
     customerName: { type: String, required: true, trim: true },
     customerAddress: { type: String, required: true },
