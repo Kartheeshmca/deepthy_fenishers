@@ -13,9 +13,9 @@ import { protect, roleCheck } from "../Middleware/Auth.js";
 const router = express.Router();
 
 // Only admins or owners can create, update, or delete bills
-router.post("/create", protect, roleCheck(["owner", "admin"]), createBill);
-router.put("/update/:id", protect, roleCheck(["owner", "admin"]), updateBill);
-router.delete("/delete/:id", protect, roleCheck(["owner", "admin"]), deleteBill);
+router.post("/create", protect, roleCheck(["owner", "admin","user"]), createBill);
+router.put("/update/:id", protect, roleCheck(["owner", "admin","user"]), updateBill);
+router.delete("/delete/:id", protect, roleCheck(["owner", "admin","user"]), deleteBill);
 
 // All logged-in users can view bills
 router.get("/all", protect, getAllBills);
