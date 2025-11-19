@@ -91,30 +91,76 @@ export const getAllCustomerDetails = async (req, res) => {
 /* ============================================================================
    GET CUSTOMER DETAIL BY ID
 ============================================================================ */
-export const getCustomerDetailsById = async (req, res) => {
+export const getCustomerByReceiver = async (req, res) => {
   try {
-    const { id } = req.params;
-    const customer = await CustomerDetails.findById(id);
+    const { receiverNo } = req.params;
 
-    if (!customer) {
-      return res.status(404).json({ message: "Customer not found" });
+    if (!receiverNo || receiverNo.trim() === "") {
+      return res
+        .status(400)
+        .json({ message: "Receiver number is required" });
     }
 
-    return res.status(200).json(customer);
+    // Find customer(s) with this receiver number
+    const customer = await CustomerDetails.find({ receiverNo }).sort({
+      createdAt: -1,
+    });
+
+    if (!customer || customer.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No customer found for this receiver number" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: customer.length,
+      data: customer,
+    });
   } catch (error) {
-    console.error("Get by ID error:", error);
-    return res.status(500).json({ message: "Server Error", error: error.message });
+    console.error("Error fetching customer by receiverNo:", error);
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
-/* ============================================================================
-   UPDATE CUSTOMER DETAILS BY ID
-============================================================================ */
+
+
+
+
+
 export const updateCustomerDetails = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const updated = await CustomerDetails.findByIdAndUpdate(id, req.body, {
+    // ✔ Allowed fields for update
+    const allowedUpdates = [
+      "companyName",
+      "customerName",
+      "receiverNo",
+      "fabric",
+      "color",
+      "dia",
+      "roll",
+      "weight",
+      "partyDcNo",
+      "date"
+    ];
+
+    // ✔ Build clean update object
+    const updateData = {};
+    Object.keys(req.body).forEach((key) => {
+      if (allowedUpdates.includes(key)) {
+        updateData[key] = req.body[key];
+      }
+    });
+
+    // ✔ Auto-update timestamp
+    updateData.updatedAt = new Date();
+
+    const updated = await CustomerDetails.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     });
@@ -129,7 +175,10 @@ export const updateCustomerDetails = async (req, res) => {
     });
   } catch (error) {
     console.error("Update error:", error);
-    return res.status(500).json({ message: "Server Error", error: error.message });
+    return res.status(500).json({
+      message: "Server Error",
+      error: error.message,
+    });
   }
 };
 
