@@ -1,10 +1,8 @@
-// Routes/Customer.js
-
 import express from "express";
 import {
   createCustomerDetails,
   getAllCustomerDetails,
-  getCustomerDetailsById,
+  getCustomerByReceiver,
   updateCustomerDetails,
   deleteCustomerDetails
 } from "../Controllers/Customer.js";
@@ -17,7 +15,7 @@ const router = express.Router();
    CUSTOMER DETAILS ROUTES
 ============================================================ */
 
-// 🔒 Create Customer (Admin or Owner only)
+// Create Customer (Admin or Owner)
 router.post(
   "/",
   protect,
@@ -25,25 +23,25 @@ router.post(
   createCustomerDetails
 );
 
-// 🔓 Get All Customers (Any authenticated user)
-router.get("/",  getAllCustomerDetails);
+// Get All Customers
+router.get("/", getAllCustomerDetails);
 
-// 🔓 Get Customer by ID (Any authenticated user)
-router.get("/:id",  getCustomerDetailsById);
+// ✅ Get Customers by Receiver No
+router.get("/receiver/:receiverNo", getCustomerByReceiver);
 
-// 🔒 Update Customer (Admin or Owner only)
+// Update Customer (Admin or Owner)
 router.put(
-  "/_:id",
-//   protect,
-//   roleCheck(["admin", "owner"]),
+  "/:id",
+  // protect,
+  // roleCheck(["admin", "owner"]),
   updateCustomerDetails
 );
 
-// 🔒 Delete Customer (Admin or Owner only)
+// Delete Customer (Admin or Owner)
 router.delete(
-  "/_:id",
-//   protect,
-//   roleCheck(["admin", "owner"]),
+  "/:id",
+  // protect,
+  // roleCheck(["admin", "owner"]),
   deleteCustomerDetails
 );
 
