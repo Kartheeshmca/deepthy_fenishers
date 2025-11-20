@@ -1,66 +1,47 @@
 import mongoose from "mongoose";
-
-/* -----------------------------
-   CHEMICALS
-------------------------------*/
 const chemicalSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   qty: { type: Number, required: true, min: 0 },
-  cost: { type: Number, required: true, min: 0 },
-  addedAt: { type: Date, default: Date.now }
+  cost: { type: Number, required: true, min: 0 }
 }, { _id: false });
 
-/* -----------------------------
-   DYES
-------------------------------*/
+// Dyes schema
 const dyeSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   qty: { type: Number, required: true, min: 0 },
-  cost: { type: Number, required: true, min: 0 },
-  addedAt: { type: Date, default: Date.now }
+  cost: { type: Number, required: true, min: 0 }
 }, { _id: false });
 
-/* -----------------------------
-   HISTORY LOG
-------------------------------*/
+// History schema
 const historySchema = new mongoose.Schema({
   action: { type: String, required: true },
   changes: { type: Object },
-  user: { type: String, default: "System" },
-  timestamp: { type: Date, default: Date.now }
+  date: { type: Date, default: Date.now },
+  user: { type: String, default: "System" }
 }, { _id: false });
 
-/* -----------------------------
-   CUSTOMER DETAILS
-------------------------------*/
-
-/* -----------------------------
-   WATER PROCESS
-------------------------------*/
-
-/* -----------------------------   MAIN FABRIC PROCESS
-------------------------------*/
 const fabricProcessSchema = new mongoose.Schema({
-  dcNo: { type: String, required: true, trim: true },
-  cycle: { type: Number, default: 1 },
-  date: { type: Date, default: Date.now },
-  // customerDetails: customerDetailsSchema,
+  receiverNo: { type: String, required: true, trim: true },
+
+  customer: { type: mongoose.Schema.Types.ObjectId, ref: "CustomerDetails" },
+
+  date: { type: Date },
   qty: { type: Number, required: true, min: 0 },
   machineNo: { type: String, required: true, trim: true },
-  // waterProcess: waterProcessSchema,
-  chemical: [chemicalSchema],
-  dyes: [dyeSchema],
   rate: { type: Number, required: true, min: 0 },
   totalCost: { type: Number, min: 0, default: 0 },
-  lotWeight: { type: Number, min: 0 },
+
+  shiftIncharge: { type: String, required: true },
+  operator: { type: String, required: true },
+  dyes: { type: [dyeSchema], default: [] },
+  chemicals: { type: [chemicalSchema], default: [] },
+  history: { type: [historySchema], default: [] },
+  cycle: { type: Number, default: 1 },
   status: {
     type: String,
     enum: ["Pending", "Running", "Paused", "Completed"],
     default: "Pending"
   },
-  history: [historySchema]
 }, { timestamps: true });
-
-fabricProcessSchema.index({ dcNo: 1, cycle: 1 }, { unique: true });
 
 export default mongoose.model("listProcess", fabricProcessSchema);
