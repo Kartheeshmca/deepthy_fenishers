@@ -38,6 +38,13 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, unique: true, match: [/^\d{10}$/, "Phone must be 10 digits"] },
     password: { type: String, required: true },
     role: { type: String, enum: ["owner", "admin", "user"], default: "user" },
+     assignedFabrics: [
+    {
+      fabricProcess: { type: mongoose.Schema.Types.ObjectId, ref: "listProcess" },
+      receiverNo: String,
+      status: { type: String, default: "Pending" }
+    }
+  ]
   },
   { timestamps: true }
 );
