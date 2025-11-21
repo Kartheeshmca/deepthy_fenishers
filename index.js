@@ -1,0 +1,50 @@
+// index.js
+import express from "express";
+import bodyParser from "body-parser";
+import mongoose from "mongoose";
+import dotenv from "dotenv";
+import cors from "cors";
+import userRoutes from "./Routes/User.js  ";
+import fabricRoutes from "./Routes/Fabric.js";
+import billingRoutes from "./Routes/Billing.js";
+import listRoutes from "./Routes/list.js";
+import Customer from "./Routes/Customer.js";
+import WaterRoutes from "./Routes/Water.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+dotenv.config();
+const App = express();
+
+// ===== Middleware =====
+App.use(express.json());
+App.use(cors());
+App.use(bodyParser.json());
+App.use(bodyParser.urlencoded({ extended: true }));
+
+// Serve public folder
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+App.use(express.static(path.join(__dirname, "public")));
+
+// ===== MongoDB Connection =====
+mongoose.set("strictQuery", false);
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(async () => {
+    console.log("Connected to MongoDB...");
+  })
+  .catch((err) => console.error("MongoDB connection error: " + err.message));
+// ===== Routes =====
+App.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+App.use("/api/users", userRoutes);
+App.use("/api/fabric", fabricRoutes);
+App.use("/api/billing", billingRoutes);
+App.use("/api/lists",listRoutes);
+App.use("/api/customers",Customer);
+App.use("/api/water",WaterRoutes);
+// ===== Start Server =====
+const port = process.env.PORT;
+App.listen(port, () => console.log("Server running on port " + port));
+
+
