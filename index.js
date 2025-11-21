@@ -38,7 +38,6 @@ mongoose
 // ===== Routes =====
 App.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 App.use("/api/users", userRoutes);
-App.use("/api/fabric", fabricRoutes);
 App.use("/api/billing", billingRoutes);
 App.use("/api/lists",listRoutes);
 App.use("/api/customers",Customer);
@@ -46,5 +45,6 @@ App.use("/api/water",WaterRoutes);
 // ===== Start Server =====
 const port = process.env.PORT;
 App.listen(port, () => console.log("Server running on port " + port));
+
 
 
