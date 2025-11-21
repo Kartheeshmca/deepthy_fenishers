@@ -5,7 +5,6 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
 import userRoutes from "./Routes/User.js  ";
-import fabricRoutes from "./Routes/Fabric.js";
 import billingRoutes from "./Routes/Billing.js";
 import listRoutes from "./Routes/list.js";
 import Customer from "./Routes/Customer.js";
@@ -45,6 +44,7 @@ App.use("/api/water",WaterRoutes);
 // ===== Start Server =====
 const port = process.env.PORT;
 App.listen(port, () => console.log("Server running on port " + port));
+
 
 
 
