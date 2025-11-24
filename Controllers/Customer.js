@@ -19,20 +19,59 @@ export const createCustomerDetails = async (req, res) => {
       return res.status(400).json({ message: "Company Name is required" });
     }
 
+    // -----------------------------
+    // ✔ DATE VALIDATION
+    // -----------------------------
+    if (!date) {
+      return res.status(400).json({ message: "Date is required" });
+    }
+
+    let parsedDate;
+
+    // Format: YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      parsedDate = new Date(date);
+    }
+    // Format: DD/MM/YYYY
+    else if (/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
+      const [day, month, year] = date.split("/");
+      parsedDate = new Date(`${year}-${month}-${day}`);
+    }
+    else {
+      return res.status(400).json({
+        message: "Invalid date format. Use YYYY-MM-DD or DD/MM/YYYY"
+      });
+    }
+
+    // Invalid date check
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ message: "Invalid date value" });
+    }
+
+    // Future date not allowed
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (parsedDate > today) {
+      return res.status(400).json({ message: "Future dates are not allowed" });
+    }
+
+    // -----------------------------
     // Validate unique partyDcNo per company
+    // -----------------------------
     const existingDC = await CustomerDetails.findOne({ companyName, partyDcNo });
     if (existingDC) {
-      return res.status(400).json({ message: `DC No ${partyDcNo} already exists for ${companyName}` });
+      return res.status(400).json({
+        message: `DC No ${partyDcNo} already exists for ${companyName}`
+      });
     }
 
     let finalReceiverNo = receiverNo;
 
+    // Auto-generate receiver no
     if (!receiverNo) {
-      // Auto-generate receiverNo
       const allCustomers = await CustomerDetails.find({}).lean();
 
       if (allCustomers.length > 0) {
-        // Extract numeric parts of existing receiverNos
         const numbers = allCustomers.map(c => {
           const parts = c.receiverNo?.split("-");
           return parts && parts[1] ? parseInt(parts[1]) : 0;
@@ -44,7 +83,7 @@ export const createCustomerDetails = async (req, res) => {
         finalReceiverNo = "R-1000";
       }
     } else {
-      // Manual receiverNo: check uniqueness
+      // Manual receiver validation
       const exists = await CustomerDetails.findOne({ receiverNo });
       if (exists) {
         return res.status(400).json({ message: "Receiver No already exists" });
@@ -52,6 +91,10 @@ export const createCustomerDetails = async (req, res) => {
       finalReceiverNo = receiverNo;
     }
 
+    // -----------------------------
+    // Create Customer
+    // -----------------------------
+      const nowIST = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
     const newCustomer = await CustomerDetails.create({
       receiverNo: finalReceiverNo,
       companyName,
@@ -62,8 +105,10 @@ export const createCustomerDetails = async (req, res) => {
       roll,
       weight,
       partyDcNo,
-      date,
+      date: parsedDate,       // ✔ validated manual date
       createdBy: req.user?.id,
+      createdAt: nowIST,
+      updatedAt: nowIST,
     });
 
     return res.status(201).json({
@@ -73,7 +118,10 @@ export const createCustomerDetails = async (req, res) => {
 
   } catch (error) {
     console.error("Create error:", error);
-    return res.status(500).json({ message: "Server Error", error: error.message });
+    return res.status(500).json({
+      message: "Server Error",
+      error: error.message
+    });
   }
 };
 
