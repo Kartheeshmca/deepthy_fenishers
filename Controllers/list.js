@@ -2,140 +2,82 @@ import listProcess from "../Models/list.js";
 import CustomerDetails from "../Models/Customer.js";
 import User from "../Models/User.js";
 import Water from "../Models/Water.js";
+const getISTMidnight = (inputDate = new Date()) => {
+  const date = new Date(inputDate);
 
-/* ============================================================================
-// CREATE FABRIC PROCESS (ASSIGN WORK)
-============================================================================ */
+  // Convert to IST by adding 5 hours 30 minutes
+  date.setHours(date.getHours() + 5, date.getMinutes() + 30, 0, 0);
+
+  // Set IST Midnight
+  date.setHours(0, 0, 0, 0);
+
+  return date;
+};
+
 export const createFabricProcess = async (req, res) => {
   try {
-    let {
-      receiverNo,
-      qty,
-      machineNo,
-      rate,
-      shiftIncharge,
-      operator,
-      date,
-      order,
-      companyName,
-      partyDcNo
-    } = req.body;
+    const allowedRoles = ["owner", "admin", "shiftincharge"];
 
-    // -----------------------------
-    // 1. Handle Customer
-    // -----------------------------
-    let customer;
-
-    if (!receiverNo) {
-      // Auto-generate receiverNo
-      const lastCustomer = await CustomerDetails.findOne({}).sort({ receiverNo: -1 });
-      const nextNumber = lastCustomer?.receiverNo
-        ? parseInt(lastCustomer.receiverNo.split("-")[1]) + 1
-        : 1000;
-
-      receiverNo = `R-${nextNumber}`;
-
-      customer = await CustomerDetails.create({
-        receiverNo,
-        companyName,
-        partyDcNo,
-        createdBy: req.user?.id,
-        date: date || new Date(),
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only Owner/Admin/ShiftIncharge can create process"
       });
-    } else {
-      customer = await CustomerDetails.findOne({ receiverNo });
-      if (!customer)
-        return res.status(404).json({ success: false, message: "Receiver No not found" });
     }
 
-    // -----------------------------
-    // 2. Validate Operator
-    // -----------------------------
-    const operatorUser = await User.findOne({ name: new RegExp(`^${operator}$`, "i") });
-    if (!operatorUser)
-      return res.status(404).json({ success: false, message: "Operator not found" });
+    const { receiverNo, qty, machineNo, rate, shiftincharge, orderNo, date } = req.body;
 
-    // -----------------------------
-    // 3. Prevent Duplicate Pending / Running
-    // -----------------------------
-    const existingProcess = await listProcess.findOne({
-      receiverNo,
-      status: { $in: ["Pending", "Running"] }
-    });
+    const customer = await CustomerDetails.findOne({ receiverNo });
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: "Receiver number not found"
+      });
+    }
 
-    if (existingProcess)
+    if (!machineNo) {
+      return res.status(400).json({ message: "Machine number is required" });
+    }
+
+    // 🔥 Prevent duplicate order numbers for same machine
+    const existingOrder = await listProcess.findOne({ machineNo, orderNo });
+
+    if (existingOrder) {
       return res.status(400).json({
         success: false,
-        message: "Task already exists for this receiver"
+        message: `Order number ${orderNo} already exists for Machine ${machineNo}`
       });
-
-    // -----------------------------
-    // 4. Determine Order
-    // -----------------------------
-    let taskOrder = order;
-
-    if (!taskOrder) {
-      const lastTask = await listProcess.findOne({ operator }).sort({ order: -1 });
-      taskOrder = lastTask ? lastTask.order + 1 : 1;
-    } else {
-      await listProcess.updateMany(
-        { operator, order: { $gte: taskOrder } },
-        { $inc: { order: 1 } }
-      );
     }
 
-    // -----------------------------
-    // 5. Create Fabric Process
-    // -----------------------------
-    const processEntry = await listProcess.create({
+    const totalCost = qty * rate;
+
+    const processData = {
       receiverNo,
       customer: customer._id,
-      date: date || new Date(),
       qty,
-      machineNo,
       rate,
-      totalCost: qty * rate,
-      shiftIncharge,
-      operator,
-      order: taskOrder,
-      status: "Pending",
-      history: [{
-        action: "Process Created",
-        changes: { status: "Pending", receiverNo, operator, order: taskOrder },
-        user: req.user?.name || "System",
-        date: new Date()
-      }]
-    });
+      totalCost,
+      machineNo,
+      shiftincharge,
+      orderNo,
+      createdBy: req.user._id,
+      date: getISTMidnight(date),
+    };
 
-    // -----------------------------
-    // 6. Assign Operator Task
-    // -----------------------------
-    await User.findByIdAndUpdate(operatorUser._id, {
-      $push: {
-        assignedFabrics: {
-          fabricProcess: processEntry._id,
-          receiverNo,
-          status: "Pending",
-          assignedDate: date || new Date(),
-          startTime: null,
-          endTime: null
-        }
-      }
-    });
-
-    const result = await listProcess.findById(processEntry._id).populate("customer");
+    const processEntry = await listProcess.create(processData);
 
     return res.status(201).json({
       success: true,
       message: "Fabric process created successfully",
-      data: result
+      data: processEntry
     });
 
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("Error creating fabric process:", error);
+    return res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
+
 
 /* ============================================================================
 // GET COMPLETED FABRIC PROCESSES WITH WATER COST
@@ -232,7 +174,7 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       machineNo: previous.machineNo,
       rate: previous.rate,
       totalCost: previous.totalCost + prevWaterCost,
-      shiftIncharge: previous.shiftIncharge,
+      shiftincharge: previous.shiftIncharge,
       operator: previous.operator,
       cycle: newCycle,
       status: "Pending",
@@ -324,42 +266,70 @@ export const getPendingFabricProcesses = async (req, res) => {
 ============================================================================ */
 export const getOperatorAssignedFabrics = async (req, res) => {
   try {
-    const operatorName = req.user?.name;
-    if (!operatorName)
-      return res.status(401).json({ success: false, message: "Unauthorized" });
+    // 1️⃣ Get operator name (from query or logged-in user)
+    let operatorName = req.query.operator || req.user?.name || null;
 
-    const operator = await User.findOne({ name: operatorName }).lean();
-    if (!operator)
-      return res.status(404).json({ success: false, message: "Operator not found" });
-
+    // 2️⃣ Normalize selected date
     const selectedDate = req.query.date ? new Date(req.query.date) : new Date();
     selectedDate.setHours(0, 0, 0, 0);
 
-    const assignedToday = operator.assignedFabrics.filter(a => {
-      const d = new Date(a.assignedDate);
-      d.setHours(0, 0, 0, 0);
-      return d.getTime() === selectedDate.getTime() && a.status === "Pending";
-    });
+    let assignedData = [];
 
-    if (!assignedToday.length)
+    // -----------------------------
+    // CASE 1: Specific operator
+    // -----------------------------
+    if (operatorName && operatorName.trim() !== "") {
+      const operator = await User.findOne({
+        name: new RegExp(`^${operatorName}$`, "i")
+      }).lean();
+
+      if (!operator)
+        return res.status(404).json({ success: false, message: "Operator not found" });
+
+      assignedData = operator.assignedFabrics.filter(a => {
+        const assigned = new Date(a.assignedDate);
+        assigned.setHours(0, 0, 0, 0);
+        return a.status === "Pending" && assigned.getTime() === selectedDate.getTime();
+      });
+    } else {
+      // -----------------------------
+      // CASE 2: All operators
+      // -----------------------------
+      const allOperators = await User.find({ role: "operator" }).lean();
+
+      for (const op of allOperators) {
+        const pendingForDate = op.assignedFabrics.filter(a => {
+          const assigned = new Date(a.assignedDate);
+          assigned.setHours(0, 0, 0, 0);
+          return a.status === "Pending" && assigned.getTime() === selectedDate.getTime();
+        });
+
+        assignedData.push(...pendingForDate);
+      }
+    }
+
+    if (!assignedData.length) {
       return res.status(200).json({
         success: true,
         count: 0,
         data: [],
         message: "No pending tasks for selected date"
       });
+    }
 
-    const ids = assignedToday.map(a => a.fabricProcess);
+    // 3️⃣ Get all fabric process IDs
+    const ids = assignedData.map(a => a.fabricProcess);
 
-    let fabrics = await listProcess.find({
-      _id: { $in: ids },
-      status: "Pending"
-    })
+    // 4️⃣ Fetch fabric processes with customer details
+    let fabrics = await listProcess
+      .find({ _id: { $in: ids }, status: "Pending" })
       .populate("customer")
       .lean();
 
-    fabrics = fabrics.sort((a, b) => a.order - b.order);
+    // 5️⃣ Sort by machine order
+    fabrics.sort((a, b) => a.order - b.order);
 
+    // 6️⃣ Mark first pending fabric as canStart
     let first = false;
     fabrics = fabrics.map(f => {
       if (!first && f.status === "Pending") {
@@ -371,6 +341,7 @@ export const getOperatorAssignedFabrics = async (req, res) => {
       return f;
     });
 
+    // 7️⃣ Return response
     return res.status(200).json({
       success: true,
       count: fabrics.length,
@@ -378,7 +349,7 @@ export const getOperatorAssignedFabrics = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error fetching operator fabrics:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -388,13 +359,17 @@ export const getOperatorAssignedFabrics = async (req, res) => {
 ============================================================================ */
 export const updateFabricProcess = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { receiverNo } = req.params;   // 🔥 Use receiverNo instead of id
     const updates = req.body;
 
-    const fabric = await listProcess.findById(id);
-    if (!fabric)
-      return res.status(404).json({ success: false, message: "Not found" });
+    const fabric = await listProcess.findOne({ receiverNo });
+    if (!fabric) {
+      return res.status(404).json({ success: false, message: "Process not found for this Receiver No" });
+    }
 
+    // ------------------------------
+    // 🔥 ORDER UPDATE HANDLING
+    // ------------------------------
     if (updates.order && updates.order !== fabric.order) {
       await listProcess.updateMany(
         {
@@ -402,6 +377,16 @@ export const updateFabricProcess = async (req, res) => {
           order: { $gte: updates.order }
         },
         { $inc: { order: 1 } }
+      );
+    }
+
+    // ------------------------------
+    // 🔥 IF RECEIVER NO UPDATED
+    // ------------------------------
+    if (updates.receiverNo && updates.receiverNo !== fabric.receiverNo) {
+      await User.updateMany(
+        { "assignedFabrics.receiverNo": receiverNo },
+        { $set: { "assignedFabrics.$.receiverNo": updates.receiverNo } }
       );
     }
 
@@ -415,34 +400,47 @@ export const updateFabricProcess = async (req, res) => {
 
     await fabric.save();
 
-    return res.status(200).json({ success: true, data: fabric });
+    return res.status(200).json({
+      success: true,
+      message: "Fabric process updated successfully",
+      data: fabric
+    });
 
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
-/* ============================================================================
-// DELETE PROCESS
-============================================================================ */
 export const deleteFabricProcess = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { receiverNo } = req.params;   // 🔥 Use receiverNo instead of id
 
-    const fabric = await listProcess.findById(id);
-    if (!fabric)
-      return res.status(404).json({ success: false, message: "Not found" });
+    const fabric = await listProcess.findOne({ receiverNo });
+    if (!fabric) {
+      return res.status(404).json({
+        success: false,
+        message: "Process not found for this Receiver No"
+      });
+    }
 
     const operator = fabric.operator;
     const order = fabric.order;
 
-    await User.updateOne(
-      { name: operator },
-      { $pull: { assignedFabrics: { fabricProcess: id } } }
+    // ------------------------------------
+    // 🔥 REMOVE ASSIGNMENTS FROM ALL OPERATORS
+    // ------------------------------------
+    await User.updateMany(
+      {},
+      { $pull: { assignedFabrics: { receiverNo } } }
     );
 
-    await listProcess.findByIdAndDelete(id);
+    // ------------------------------------
+    // 🔥 DELETE THE FABRIC PROCESS
+    // ------------------------------------
+    await listProcess.deleteOne({ receiverNo });
 
+    // ------------------------------------
+    // 🔥 FIX ORDER FOR REMAINING PROCESSES
+    // ------------------------------------
     await listProcess.updateMany(
       { operator, order: { $gt: order } },
       { $inc: { order: -1 } }
@@ -450,7 +448,7 @@ export const deleteFabricProcess = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Deleted successfully"
+      message: "Fabric process deleted successfully"
     });
 
   } catch (error) {
@@ -589,6 +587,10 @@ export const getFabricReportByReceiver = async (req, res) => {
 /* ============================================================================
 // ADD DYES AND CHEMICALS
 ============================================================================ */
+/* ============================================================================
+   ADD DYES AND CHEMICALS (Status must be Completed)
+   Automatically updates total cost
+============================================================================ */
 export const addDyesAndChemicalsByReceiver = async (req, res) => {
   try {
     const { receiverNo } = req.params;
@@ -596,6 +598,7 @@ export const addDyesAndChemicalsByReceiver = async (req, res) => {
 
     const userName = req.user?.name || "System";
 
+    // Find latest entry by receiver number
     const fabric = await listProcess
       .findOne({ receiverNo })
       .sort({ createdAt: -1 });
@@ -603,41 +606,166 @@ export const addDyesAndChemicalsByReceiver = async (req, res) => {
     if (!fabric)
       return res.status(404).json({ success: false, message: "Fabric not found" });
 
-    if (fabric.status !== "Completed")
+    // Ensure process is completed
+    if (fabric.status !== "Completed") {
       return res.status(400).json({
         success: false,
-        message: "Can add dyes/chemicals only to Completed fabrics"
+        message: "Dyes/Chemicals can be added only to Completed fabrics"
       });
+    }
 
-    if (dyes.length > 0) fabric.dyes.push(...dyes);
-    if (chemicals.length > 0) fabric.chemicals.push(...chemicals);
+    // Push dyes & chemicals
+    if (Array.isArray(dyes) && dyes.length > 0) {
+      fabric.dyes.push(...dyes);
+    }
 
-    const dyesCost = fabric.dyes.reduce((sum, d) => sum + d.qty * d.cost, 0);
-    const chemicalsCost = fabric.chemicals.reduce((sum, c) => sum + c.qty * c.cost, 0);
+    if (Array.isArray(chemicals) && chemicals.length > 0) {
+      fabric.chemicals.push(...chemicals);
+    }
 
-    fabric.totalCost = fabric.rate * fabric.qty + dyesCost + chemicalsCost;
+    // =======================
+    // COST CALCULATIONS
+    // =======================
 
+    // Dye total
+    const dyesCost = fabric.dyes.reduce((sum, item) => {
+      const qty = Number(item.qty) || 0;
+      const cost = Number(item.cost) || 0;
+      return sum + qty * cost;
+    }, 0);
+
+    // Chemical total
+    const chemicalsCost = fabric.chemicals.reduce((sum, item) => {
+      const qty = Number(item.qty) || 0;
+      const cost = Number(item.cost) || 0;
+      return sum + qty * cost;
+    }, 0);
+
+    // Base process cost (rate * qty)
+    const baseCost = (Number(fabric.rate) || 0) * (Number(fabric.qty) || 0);
+
+    // Auto update total cost
+    fabric.totalCost = baseCost + dyesCost + chemicalsCost;
+
+    // Save history
     fabric.history.push({
-      action: "Dyes & Chemicals Added",
-      changes: { dyes, chemicals, totalCost: fabric.totalCost },
+      action: "Added dyes/chemicals",
+      changes: { dyes, chemicals },
       user: userName,
       date: new Date()
     });
 
     await fabric.save();
 
-    const updated = await listProcess
-      .findOne({ receiverNo })
-      .populate("customer");
+    return res.status(200).json({
+      success: true,
+      message: "Dyes and chemicals added successfully",
+      totalCost: fabric.totalCost,
+      costBreakup: {
+        baseCost,
+        dyesCost,
+        chemicalsCost
+      },
+      data: fabric
+    });
+
+  } catch (error) {
+    console.error("Error adding dyes/chemicals:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const getMachineQueue = async (req, res) => {
+  try {
+    const { machineNo } = req.query;
+
+    if (!machineNo) {
+      return res.status(400).json({ message: "Machine number required" });
+    }
+
+    const queue = await listProcess
+      .find({ machineNo })
+      .sort({ order: 1 }) // ALWAYS sorted by order
+      .lean();
+
+    return res.status(200).json({ success: true, queue });
+
+  } catch (error) {
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+export const getPendingForAllOperators = async (req, res) => {
+  try {
+    const pending = await listProcess
+      .find({
+        $or: [
+          { operator: { $exists: false } },
+          { operator: null },
+          { operator: "" }
+        ]
+      })
+      .sort({ machineNo: 1, order: 1 }) // machine-wise + order-wise sorting
+      .lean();
 
     return res.status(200).json({
       success: true,
-      message: "Dyes & chemicals added",
-      data: updated
+      count: pending.length,
+      pending
     });
 
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+export const getFabricsByMachine = async (req, res) => {
+  try {
+    const { machineNo } = req.query;
+
+    if (!machineNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Machine number is required",
+      });
+    }
+
+    let filter = { machineNo };
+    const userRole = req.user?.role;
+
+    // Operator sees only today's IST date
+    if (userRole === "operator") {
+      const todayIST = getISTMidnight();
+      filter.date = todayIST;
+    }
+
+    const fabricList = await listProcess
+      .find(filter)
+      .sort({ orderNo: 1 })    // 🔥 FIXED: Sort by orderNo
+      .lean();
+
+    if (!fabricList.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No fabrics assigned for you today",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      machineNo,
+      count: fabricList.length,
+      data: fabricList,
+    });
+
+  } catch (error) {
+    console.error("Error fetching fabrics by machine:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+      error: error.message,
+    });
   }
 };
