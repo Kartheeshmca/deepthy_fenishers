@@ -20,16 +20,15 @@ const historySchema = new mongoose.Schema({
 }, { _id: false });
 
 const fabricProcessSchema = new mongoose.Schema({
+  machineNo: { type: String, required: true, trim: true },
   receiverNo: { type: String, required: true, trim: true },
   customer: { type: mongoose.Schema.Types.ObjectId, ref: "CustomerDetails" },
   date: { type: Date, required: true },             // Admin assigned date
   qty: { type: Number, required: true, min: 0 },
-  machineNo: { type: String, required: true, trim: true },
   rate: { type: Number, required: true, min: 0 },
   totalCost: { type: Number, min: 0, default: 0 },
-  shiftIncharge: { type: String, required: true },
-  operator: { type: String, required: true },
-  order: { type: Number, required: true },          // Sequence order
+  shiftincharge: { type: String, required: true },
+  orderNo: { type: Number, required: true },          // Sequence order
   dyes: { type: [dyeSchema], default: [] },
   chemicals: { type: [chemicalSchema], default: [] },
   history: { type: [historySchema], default: [] },
