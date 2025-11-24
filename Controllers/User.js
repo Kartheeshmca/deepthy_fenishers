@@ -1,37 +1,48 @@
-// Controllers/userController.js
 import User from "../Models/User.js";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-
+import { UAParser } from "ua-parser-js";
 dotenv.config();
 
-/**
- * Helper to generate auto password: first 3 letters of name (lowercased) + last 4 digits of phone
- * If name shorter than 3, use full name.
-*/
+// ==================== HELPER FUNCTIONS ====================
+
+// Generate auto password (first 3 letters of name + last 4 digits of phone)
 const generateAutoPassword = (name, phone) => {
   const namePart = (name || "").replace(/\s+/g, "").toLowerCase().substring(0, 3);
   const phonePart = (phone || "").slice(-4);
   return namePart + phonePart;
 };
+const toIST = (date) => {
+  return new Date(date).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+};
+// ==================== USER CONTROLLERS ====================
 
-export const createOwnerIfNone = async (req, res) => {
+// CREATE USER
+// CREATE OWNER (No Token Required, multiple allowed, prevent duplicate name+phone)
+export const createOwner = async (req, res) => {
   try {
-    // const existingOwner = await User.findOne({ role: "owner" });
-    // if (existingOwner) return res.status(400).json({ message: "Owner already exists" });
-
     const { name, phone, password } = req.body;
-    if (!name || !phone) return res.status(400).json({ message: "Name and phone required" });
+    if (!name || !phone) 
+      return res.status(400).json({ message: "Name and phone are required" });
 
-    const pwd = password ? password : generateAutoPassword(name, phone);
+    // Check if owner with same name and phone already exists
+    const existingOwner = await User.findOne({ role: "owner", name, phone });
+    if (existingOwner) 
+      return res.status(400).json({ message: "Owner with same name and phone already exists" });
+
+    const pwd = password || generateAutoPassword(name, phone);
     const owner = new User({ name, phone, password: pwd, role: "owner" });
+
+    // Log creation activity
+
     await owner.save();
 
     return res.status(201).json({
-      message: "Owner created",
+      message: "Owner created successfully",
       owner: { id: owner._id, name: owner.name, phone: owner.phone, role: owner.role },
-      password: password ? undefined : pwd, // return generated password once
+      password: password ? undefined : pwd, // return generated password
     });
+
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ message: "Phone already exists" });
     console.error(err);
@@ -39,28 +50,38 @@ export const createOwnerIfNone = async (req, res) => {
   }
 };
 
-// General user creation
 export const createUser = async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
     const requesterRole = req.user.role;
 
-    if (!role) return res.status(400).json({ message: "Role is required (admin/user)" });
-    if (!["admin", "user"].includes(role)) return res.status(400).json({ message: "Invalid role" });
+    // Validation
+    if (!role) return res.status(400).json({ message: "Role is required" });
+    if (!["owner", "admin", "shiftincharge", "operator"].includes(role))
+      return res.status(400).json({ message: "Invalid role" });
 
-    if (requesterRole === "admin" && role !== "user") {
-      return res.status(403).json({ message: "Admin can only create users" });
-    }
+    // Role-based creation permissions
+    if (requesterRole === "admin" && role === "owner")
+      return res.status(403).json({ message: "Admin cannot create owner" });
+    if (requesterRole === "shiftincharge" && role !== "operator")
+      return res.status(403).json({ message: "ShiftIncharge can only create operators" });
+    if (requesterRole === "operator")
+      return res.status(403).json({ message: "Operator cannot create users" });
 
-    const pwd = password ? password : generateAutoPassword(name, phone);
+    const pwd = password || generateAutoPassword(name, phone);
     const user = new User({ name, phone, password: pwd, role });
+
+    // Log creation activity
+    
+
     await user.save();
 
     return res.status(201).json({
-      message: "User created",
-      user: { id: user._id, name: user.name, phone: user.phone, role: user.role },
-      password: password ? undefined : pwd,
+      message: "User created successfully",
+      user: { id: user._id, name: user.name, phone: user.phone, role: user.role, meta: user.meta },
+      password: password ? undefined : pwd, // send auto password if generated
     });
+
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ message: "Phone already exists" });
     console.error(err);
@@ -68,46 +89,49 @@ export const createUser = async (req, res) => {
   }
 };
 
-// Login
-// Login (requires name, phone, and password)
+// LOGIN
+// LOGIN
 
 
+// LOGIN
 export const login = async (req, res) => {
   try {
-    const { identifier, password } = req.body; // identifier = phone OR name
+    const { identifier, password, deviceInfo: frontendDeviceInfo } = req.body;
 
-    if (!identifier || !password) {
-      return res.status(400).json({ message: "Phone/Name and password are required" });
-    }
+    if (!identifier || !password)
+      return res.status(400).json({ message: "Phone/Name and password required" });
 
-    // Find user by phone OR name
-    // 
-    // const user = await User.findOne({
-      // $or: [
-        // { phone: identifier },
-        // { name: new RegExp("^" + identifier + "$", "i") }, // case-insensitive exact match
-      // ],
-    // });
-    const identifierTrimmed = identifier.trim();
+    const user = await User.findOne({
+      $or: [
+        { phone: identifier.trim() },
+        { name: { $regex: new RegExp("^" + identifier.trim() + "$", "i") } },
+      ],
+    });
 
-const user = await User.findOne({
-  $or: [
-    { phone: identifierTrimmed },
-    { name: { $regex: new RegExp("^" + identifierTrimmed + "$", "i") } },
-  ],
-});
-
-
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+    if (!user || !user.comparePassword(password))
+      return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign(
       { id: user._id, role: user.role, name: user.name },
-      process.env.JWT_SECRET || "temporarySecret",
+      process.env.JWT_SECRET || "tempSecret",
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
+
+    // If frontend sends deviceInfo, use it; otherwise parse from user-agent
+    let deviceInfo = frontendDeviceInfo;
+    if (!deviceInfo) {
+      const parser = new UAParser(req.headers["user-agent"]);
+      const uaResult = parser.getResult();
+      deviceInfo = `${uaResult.device.vendor || "Unknown Device"} ${uaResult.device.model || ""} (${uaResult.device.type || "desktop"}) - OS: ${uaResult.os.name || "Unknown OS"} ${uaResult.os.version || ""} - Browser: ${uaResult.browser.name || "Unknown Browser"} ${uaResult.browser.version || ""}`;
+    }
+
+    // Update meta, activity & status
+    const now = new Date();
+    user.meta.lastLogin = now;
+    user.meta.deviceInfo = deviceInfo;
+    user.status = "active";  // 🔥 Set ACTIVE on login
+
+    await user.save();
 
     return res.json({
       message: "Login successful",
@@ -117,176 +141,282 @@ const user = await User.findOne({
         name: user.name,
         phone: user.phone,
         role: user.role,
+        status: user.status,    // 🔥 send status
+        meta: {
+          ...user.meta.toObject(),
+          lastLogin: toIST(now),
+        },
       },
     });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
 
-
-
-
-// Get all users (owner/admin protected)
-export const getAllUsers = async (req, res) => {
-  try {
-    const requesterRole = req.user.role;
-
-    // Fetch all users except owner
-    let users;
-    if (requesterRole === "admin" || requesterRole === "owner") {
-      // Admin/owner can see passwords
-      users = await User.find({ role: { $ne: "owner" } }).sort({ createdAt: -1 });
-    } else {
-      // Normal users cannot see passwords
-      users = await User.find({ role: { $ne: "owner" } })
-        .select("-password")
-        .sort({ createdAt: -1 });
-    }
-
-    return res.json({ users });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "Server error" });
   }
 };
 
-
-export const getUserById = async (req, res) => {
+// LOGOUT
+export const logout = async (req, res) => {
   try {
-    const requesterRole = req.user.role;
-    const user = await User.findById(req.params.id);
+    const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Only remove password for normal users
-    const responseUser = {
+    const deviceInfo = req.body.deviceInfo || "Unknown Device";
+    const now = new Date();
+
+    // Update status and meta
+    user.meta.lastLogout = now;
+    user.status = "inactive";   // 🔥 Set INACTIVE on logout
+
+    
+
+    await user.save();
+
+    return res.json({
+      message: "Logout successful",
+      whoLoggedOut: {
+        id: user._id,
+        name: user.name,
+        role: user.role,
+        status: user.status,  // 🔥 send updated status
+      },
+      lastLogout: toIST(now),
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// GET ALL USERS (frontend-controlled pagination & latest first)
+// ==================== GET ALL USERS ====================
+export const getAllUsers = async (req, res) => {
+  try {
+    const requester = req.user; // logged in user details from middleware
+    const { page = 1, limit = 10 } = req.query;
+
+    let filter = {};
+
+    // ======================= ROLE RESTRICTIONS =========================
+
+    if (requester.role === "owner") {
+      // owner sees everyone → no filter needed
+      filter = {};
+    }
+
+    else if (requester.role === "admin") {
+      // admin sees: own profile + all shiftincharge + all operators
+      filter = {
+        $or: [
+          { _id: requester.id },          // own profile
+          { role: "shiftincharge" },
+          { role: "operator" }
+        ]
+      };
+    }
+
+    else if (requester.role === "shiftincharge") {
+      // shift-incharge sees: own + operators
+      filter = {
+        $or: [
+          { _id: requester.id },
+          { role: "operator" }
+        ]
+      };
+    }
+
+    else if (requester.role === "operator") {
+      // operator sees only own profile
+      filter = { _id: requester.id };
+    }
+
+    // ======================= QUERY USERS =========================
+
+    const users = await User.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit));
+
+    const totalUsers = await User.countDocuments(filter);
+
+    // ======================= Convert UTC → IST =========================
+    const toIST = (utcDate) => {
+      if (!utcDate) return null;
+      return new Date(utcDate).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+      });
+    };
+
+    // ======================= FORMAT USER =========================
+    const formatUser = (u) => ({
+      id: u._id,
+      name: u.name,
+      phone: u.phone,
+      role: u.role,
+      status: u.status || "inactive",
+      meta: {
+        lastLogin: u.meta?.lastLogin ? toIST(u.meta.lastLogin) : null,
+        lastLogout: u.meta?.lastLogout ? toIST(u.meta.lastLogout) : null,
+        deviceInfo: u.meta?.deviceInfo || "Unknown Device",
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      page: Number(page),
+      limit: Number(limit),
+      totalUsers,
+      users: users.map(formatUser),
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+// GET USER BY ID
+// ==================== GET USER BY ID ====================
+export const getUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Convert UTC → IST
+    const toIST = (utcDate) => {
+      if (!utcDate) return null;
+      return new Date(utcDate).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+      });
+    };
+
+    const formattedUser = {
       id: user._id,
       name: user.name,
       phone: user.phone,
       role: user.role,
-      password: requesterRole === "admin" || requesterRole === "owner" ? user.password : undefined,
+      status: user.status || "inactive",
+      meta: {
+        lastLogin: user.meta?.lastLogin ? toIST(user.meta.lastLogin) : null,
+        lastLogout: user.meta?.lastLogout ? toIST(user.meta.lastLogout) : null,
+        deviceInfo: user.meta?.deviceInfo || "Unknown Device",
+      }
     };
 
-    return res.json({ user: responseUser });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(200).json({
+      success: true,
+      user: formattedUser,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-
+// UPDATE USER
 export const updateUser = async (req, res) => {
   try {
-    const targetId = req.params.id;
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ message: "User not found" });
+
     const requester = req.user;
+    const deviceInfo = req.body.deviceInfo || "Unknown Device";
 
-    // Only owner can update admin or owner. Admin can update user only. Users can update themselves.
-    const toUpdate = await User.findById(targetId);
-    if (!toUpdate) return res.status(404).json({ message: "User not found" });
+    // Role restrictions
+    if (requester.role === "admin" && target.role === "owner")
+      return res.status(403).json({ message: "Admin cannot update owner" });
 
-    // Role-based access
-    if (requester.role === "admin" && toUpdate.role !== "user") {
-      return res.status(403).json({ message: "Admin can update users only" });
+    if (requester.role === "shiftincharge" && ["owner", "admin"].includes(target.role))
+      return res.status(403).json({ message: "ShiftIncharge cannot update owner/admin" });
+
+    if (requester.role === "operator" && requester.id !== target._id.toString())
+      return res.status(403).json({ message: "Operator can update only self" });
+
+    const { name, phone, password, role } = req.body;
+    const changes = [];
+
+    if (name && name !== target.name) { changes.push(`name updated`); target.name = name; }
+    if (phone && phone !== target.phone) { changes.push(`phone updated`); target.phone = phone; }
+    if (password) { changes.push("password updated"); target.password = password; }
+
+    if (role && role !== target.role) {
+      if (requester.role !== "owner") 
+        return res.status(403).json({ message: "Only owner can change role" });
+      
+      changes.push(`role updated`);
+      target.role = role;
     }
-    if (requester.role === "user" && requester.id !== toUpdate._id.toString()) {
-      return res.status(403).json({ message: "User can update only their own profile" });
+
+    if (changes.length > 0) {
+      target.meta.updatedBy = requester.name;
+      target.meta.updatedAt = new Date();
     }
 
-    const { name, phone, password } = req.body;
-    if (name) toUpdate.name = name;
-    if (phone) toUpdate.phone = phone;
-    if (password) toUpdate.password = password; // will be hashed in pre-save
+    await target.save();
 
-    await toUpdate.save();
+    return res.json({
+      message: "User updated",
+      user: {
+        id: target._id,
+        name: target.name,
+        phone: target.phone,
+        role: target.role,
+        status: target.status,
+        assignedFabrics: target.assignedFabrics,
+        meta: {
+          lastLogin: target.meta.lastLogin ? toIST(target.meta.lastLogin) : null,
+          lastLogout: target.meta.lastLogout ? toIST(target.meta.lastLogout) : null,
+          updatedBy: target.meta.updatedBy || null,
+          updatedAt: target.meta.updatedAt ? toIST(target.meta.updatedAt) : null,
+          deviceInfo: target.meta.deviceInfo || "Unknown Device",
+        }
+      }
+    });
 
-    return res.json({ message: "User updated", user: { id: toUpdate._id, name: toUpdate.name, phone: toUpdate.phone, role: toUpdate.role } });
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ message: "Phone already exists" });
     console.error(err);
     return res.status(500).json({ message: "Server error" });
   }
 };
 
+
+// DELETE USER
 export const deleteUser = async (req, res) => {
   try {
-    const targetId = req.params.id;
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ message: "User not found" });
+
     const requester = req.user;
-    const toDelete = await User.findById(targetId);
-    if (!toDelete) return res.status(404).json({ message: "User not found" });
 
-    // Owner cannot be deleted except by owner (we'll disallow deletion of owner by others)
-    if (toDelete.role === "owner" && requester.role !== "owner") {
-      return res.status(403).json({ message: "Only owner can delete owner" });
-    }
+    if (requester.role === "admin" && target.role === "owner")
+      return res.status(403).json({ message: "Admin cannot delete owner" });
+    if (requester.role === "shiftincharge" && ["owner", "admin"].includes(target.role))
+      return res.status(403).json({ message: "ShiftIncharge cannot delete owner/admin" });
+    if (requester.role === "operator" && requester.id !== target._id.toString())
+      return res.status(403).json({ message: "Operator can delete only self" });
 
-    // Admin cannot delete admin/owner
-    if (requester.role === "admin" && toDelete.role !== "user") {
-      return res.status(403).json({ message: "Admin can delete users only" });
-    }
+    const now = new Date();
 
-    // Users can delete themselves
-    if (requester.role === "user" && requester.id !== toDelete._id.toString()) {
-      return res.status(403).json({ message: "User can delete only their own account" });
-    }
+    // 🔥 Add delete activity BEFORE deleting
+    
+    await target.save();
+    await User.findByIdAndDelete(req.params.id);
 
-    await User.findByIdAndDelete(targetId);
-    return res.json({ message: "User deleted" });
+    return res.json({
+      message: "User deleted successfully",
+      deletedAt: toIST(now)
+    });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "Server error" });
   }
 };
-// ---------------- Search & Paginate Users ----------------
-export const searchAll = async (req, res) => {
-  try {
-    const { search, role, page = 1, limit = 10 } = req.query; // default page 1, limit 10
-    const query = {};
 
-    // Search by name, phone, or role
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
-        { role: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    // Filter by role specifically
-    if (role) {
-      query.role = role;
-    }
-
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const users = await User.find(query)
-      .select("-password")
-      .skip(skip)
-      .limit(parseInt(limit))
-      .sort({ createdAt: -1 });
-
-    const total = await User.countDocuments(query);
-
-    if (!users.length) {
-      return res.status(404).json({
-        success: false,
-        message: "No users found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: users,
-      page: parseInt(page),
-      totalPages: Math.ceil(total / parseInt(limit)),
-      total,
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-// View decrypted password (only owner/admin)
+// VIEW USER PASSWORD (owner/admin only)
 export const viewUserPassword = async (req, res) => {
   try {
     const requesterRole = req.user.role;
@@ -301,8 +431,9 @@ export const viewUserPassword = async (req, res) => {
       name: user.name,
       phone: user.phone,
       role: user.role,
-      password: user.getDecryptedPassword(),
+      password: user.getDecryptedPassword(), // decrypt from schema
     });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "Server error" });
