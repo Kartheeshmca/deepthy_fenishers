@@ -1,47 +1,47 @@
-// Routes/userRoutes.js
 import express from "express";
 import {
-  createOwnerIfNone,
+  createOwner,
   createUser,
   login,
+  logout,
   getAllUsers,
   getUserById,
   updateUser,
   deleteUser,
-  searchAll,
   viewUserPassword
 } from "../Controllers/User.js";
+
 import { protect, roleCheck } from "../Middleware/Auth.js";
 
 const router = express.Router();
 
-// Public: create owner only if none exists
-router.post("/create-owner", createOwnerIfNone);
+// ==================== AUTH ROUTES ====================
 
-// Public: login (req body: { name, password })
+// Login route (no auth required)
 router.post("/login", login);
 
-// Protected routes
-// Owner and admin can list users
-router.get("/all", protect, roleCheck(["owner", "admin"]), getAllUsers);
+// Logout route (auth required)
+router.post("/logout", protect, logout);
 
-// Owner and admin create user (but controller enforces that admin can only create user)
-router.post("/create", 
-  // protect, roleCheck(["owner", "admin"]),
-   createUser);
+// ==================== USER CRUD ROUTES ====================
 
-// Get user by id
-router.get("/byId/:id", protect, roleCheck(["owner", "admin","user"]), getUserById);
+// Create user (owner/admin/shiftincharge)
+router.post("/create-owner", createOwner);
+router.post("/create", protect, roleCheck(["owner", "admin", "shiftincharge"]), createUser);
 
-// Update user (owner/admin/user with rules enforced inside controller)
-router.put("/:id", protect, updateUser);
+// Get all users (owner/admin/shiftincharge/operator)
+router.get("/all", protect, getAllUsers);
 
-// Delete user (owner/admin/user with rules enforced inside controller)
+// Get user by ID
+router.get("/byId/:id", protect, getUserById);
+
+// Update user by ID
+router.put("/update/:id", protect, updateUser);
+
+// Delete user by ID
 router.delete("/delete/:id", protect, deleteUser);
 
-// Search & paginate users (only owner & admin can access)
-router.get("/searchAll", protect, roleCheck(["owner", "admin"]), searchAll);
-
-// Admin/owner view password
+// View user password (only owner/admin)
 router.get("/view-password/:id", protect, roleCheck(["owner", "admin"]), viewUserPassword);
+
 export default router;
