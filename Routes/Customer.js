@@ -11,27 +11,23 @@ import { protect, roleCheck } from "../Middleware/Auth.js";
 
 const router = express.Router();
 
-/* ============================================================
-   CUSTOMER DETAILS ROUTES
-============================================================ */
-
 // Create Customer (Admin or Owner)
 router.post(
-  "/",
+  "/create",
    protect,
    roleCheck(["admin", "owner"]),
   createCustomerDetails
 );
 
 // Get All Customers
-router.get("/", getAllCustomerDetails);
+router.get("/",protect,roleCheck(["admin", "owner"]), getAllCustomerDetails);
 
 // ✅ Get Customers by Receiver No
-router.get("/receiver/:receiverNo", getCustomerByReceiver);
+router.get("/receiver/:receiverNo",protect,roleCheck(["admin", "owner"]), getCustomerByReceiver);
 
 // Update Customer (Admin or Owner)
 router.put(
-  "/:id",
+  "/update/:id",
    protect,
    roleCheck(["admin", "owner"]),
   updateCustomerDetails
@@ -39,7 +35,7 @@ router.put(
 
 // Delete Customer (Admin or Owner)
 router.delete(
-  "/:id",
+  "/delete/:id",
    protect,
    roleCheck(["admin", "owner"]),
   deleteCustomerDetails
