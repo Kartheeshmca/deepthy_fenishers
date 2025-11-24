@@ -1,113 +1,128 @@
 import express from "express";
 import {
   createFabricProcess,
-  getAllFabricProcesses,
-  getFabricProcessById,
-  updateFabricProcess,
-  deleteFabricProcess,
-  getPendingFabricProcesses,
-  getOperatorAssignedFabrics,
   getCompletedFabricProcesses,
   reProcessFabricWithWaterCost,
+  getPendingFabricProcesses,
+  getOperatorAssignedFabrics,
+  updateFabricProcess,
+  deleteFabricProcess,
+  getAllFabricProcesses,
+  getFabricProcessById,
   getFabricReportByMachine,
-  getFabricReportByReceiver
- 
-  
+  getFabricReportByReceiver,
+  addDyesAndChemicalsByReceiver,
+  getFabricsByMachine
 } from "../Controllers/list.js";
 
 import { protect, roleCheck } from "../Middleware/Auth.js";
 
 const router = express.Router();
 
-/* ============================================================================
-   ADMIN / OPERATOR ROUTES
-============================================================================ */
+// =====================================
+// FABRIC PROCESS ROUTES
+// =====================================
 
-// Create fabric process → Only Admin / Manager
+// Create new process
 router.post(
   "/create",
-   protect,
-   roleCheck(["admin","owner"]),
+  protect,
+  roleCheck(["admin", "owner", "shiftincharge"]),
   createFabricProcess
 );
 
-// Get all fabrics → Admin / Manager
+// Get all
 router.get(
-  "/",
-   protect,
-  roleCheck(["admin","owner"]),
+  "/all",
+  protect,
+  roleCheck(["admin", "owner"]),
   getAllFabricProcesses
 );
 
-
-/* ============================================================================
-   OPERATOR SPECIFIC ROUTES
-============================================================================ */
-
-// Get assigned pending fabrics → Operator
+// Get single
 router.get(
-  "/assigned",
+  "/single/:id",
   protect,
-  roleCheck(["user"]),
-  getOperatorAssignedFabrics
+  roleCheck(["admin", "owner"]),
+  getFabricProcessById
+);
+router.get(
+  "/machine",
+  protect,
+  roleCheck(["admin", "owner","operator","shiftincharge"]),
+  getFabricsByMachine
 );
 
-// Get pending fabrics for table/filter → Admin / Manager
+// Pending latest per receiver
 router.get(
-  "/pending",
-   protect,
-   roleCheck(["admin","owner"]),
+  "/pending/list",
+  protect,
+  roleCheck(["admin", "owner", "shiftincharge"]),
   getPendingFabricProcesses
 );
 
-// Get completed fabrics → Admin / Manager
+// Completed
 router.get(
-  "/completed",
-   protect,
-   roleCheck(["admin","owner"]),
+  "/completed/list",
+  protect,
+  roleCheck(["admin", "owner"]),
   getCompletedFabricProcesses
 );
 
-// Reprocess fabric with water cost → Admin / Manager
+// Reprocess
 router.post(
-  "/:receiverNo",
+  "/reprocess/:receiverNo",
   protect,
-  roleCheck(["admin","owner"]),
+  roleCheck(["admin", "owner", "shiftincharge"]),
   reProcessFabricWithWaterCost
 );
+
+// Operator tasks
+router.get(
+  "/operator/tasks",
+  protect,
+  roleCheck(["admin", "owner", "operator"]),
+  getOperatorAssignedFabrics
+);
+
+// Machine report
 router.get(
   "/report/machine/:machineNo",
   protect,
   roleCheck(["admin", "owner"]),
   getFabricReportByMachine
 );
+
+// Receiver report
 router.get(
-  "/receiver/:receiverNo",
+  "/report/receiver/:receiverNo",
   protect,
   roleCheck(["admin", "owner"]),
   getFabricReportByReceiver
 );
-// Get single fabric by ID → Admin / Manager
-router.get(
-  "/:id",
+
+// Add dyes & chemicals
+router.post(
+  "/dyes-chemicals/:receiverNo",
   protect,
-   roleCheck(["admin","owner"]),
-  getFabricProcessById
+  roleCheck(["admin", "owner"]),
+  addDyesAndChemicalsByReceiver
 );
 
-// Update fabric process → Admin / Manager
+// Update
 router.put(
-  "/:id",
-   protect,
-   roleCheck(["admin","owner"]),
+  "/update/:recieverNo",
+  protect,
+  roleCheck(["admin", "owner"]),
   updateFabricProcess
 );
 
-// Delete fabric process → Admin / Manager
+// Delete
 router.delete(
-  "/:id",
-   protect,
-   roleCheck(["admin","owner"]),
+  "/delete/:receiverNo",
+  protect,
+  roleCheck(["admin", "owner"]),
   deleteFabricProcess
 );
+
 export default router;
