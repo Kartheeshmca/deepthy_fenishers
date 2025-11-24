@@ -2,18 +2,14 @@ import listProcess from "../Models/list.js";
 import CustomerDetails from "../Models/Customer.js";
 import User from "../Models/User.js";
 import Water from "../Models/Water.js";
-const getISTMidnight = (inputDate = new Date()) => {
+const getLocalMidnight = (inputDate) => {
   const date = new Date(inputDate);
-
-  // Convert to IST by adding 5 hours 30 minutes
-  date.setHours(date.getHours() + 5, date.getMinutes() + 30, 0, 0);
-
-  // Set IST Midnight
   date.setHours(0, 0, 0, 0);
-
   return date;
 };
-
+const toIST = (date) => {
+  return new Date(date).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+};
 export const createFabricProcess = async (req, res) => {
   try {
     const allowedRoles = ["owner", "admin", "shiftincharge"];
@@ -27,21 +23,17 @@ export const createFabricProcess = async (req, res) => {
 
     const { receiverNo, qty, machineNo, rate, shiftincharge, orderNo, date } = req.body;
 
+    if (!receiverNo || !machineNo || !date) {
+      return res.status(400).json({ success: false, message: "Required fields missing" });
+    }
+
     const customer = await CustomerDetails.findOne({ receiverNo });
     if (!customer) {
-      return res.status(404).json({
-        success: false,
-        message: "Receiver number not found"
-      });
+      return res.status(404).json({ success: false, message: "Receiver number not found" });
     }
 
-    if (!machineNo) {
-      return res.status(400).json({ message: "Machine number is required" });
-    }
-
-    // 🔥 Prevent duplicate order numbers for same machine
+    // Prevent duplicate order numbers for same machine
     const existingOrder = await listProcess.findOne({ machineNo, orderNo });
-
     if (existingOrder) {
       return res.status(400).json({
         success: false,
@@ -61,24 +53,30 @@ export const createFabricProcess = async (req, res) => {
       shiftincharge,
       orderNo,
       createdBy: req.user._id,
-      date: getISTMidnight(date),
+      date: getLocalMidnight(date), // Save as midnight UTC
     };
 
     const processEntry = await listProcess.create(processData);
 
+    // Convert dates to IST for response
+    const responseEntry = {
+      ...processEntry.toObject(),
+      date: toIST(processEntry.date),
+      createdAt: toIST(processEntry.createdAt),
+      updatedAt: toIST(processEntry.updatedAt)
+    };
+
     return res.status(201).json({
       success: true,
       message: "Fabric process created successfully",
-      data: processEntry
+      data: responseEntry
     });
 
   } catch (error) {
     console.error("Error creating fabric process:", error);
-    return res.status(500).json({ message: "Server Error", error: error.message });
+    return res.status(500).json({ success: false, message: "Server Error", error: error.message });
   }
 };
-
-
 /* ============================================================================
 // GET COMPLETED FABRIC PROCESSES WITH WATER COST
 ============================================================================ */
@@ -266,23 +264,14 @@ export const getPendingFabricProcesses = async (req, res) => {
 ============================================================================ */
 export const getOperatorAssignedFabrics = async (req, res) => {
   try {
-    // 1️⃣ Get operator name (from query or logged-in user)
     let operatorName = req.query.operator || req.user?.name || null;
-
-    // 2️⃣ Normalize selected date
     const selectedDate = req.query.date ? new Date(req.query.date) : new Date();
     selectedDate.setHours(0, 0, 0, 0);
 
     let assignedData = [];
 
-    // -----------------------------
-    // CASE 1: Specific operator
-    // -----------------------------
     if (operatorName && operatorName.trim() !== "") {
-      const operator = await User.findOne({
-        name: new RegExp(`^${operatorName}$`, "i")
-      }).lean();
-
+      const operator = await User.findOne({ name: new RegExp(`^${operatorName}$`, "i") }).lean();
       if (!operator)
         return res.status(404).json({ success: false, message: "Operator not found" });
 
@@ -292,18 +281,13 @@ export const getOperatorAssignedFabrics = async (req, res) => {
         return a.status === "Pending" && assigned.getTime() === selectedDate.getTime();
       });
     } else {
-      // -----------------------------
-      // CASE 2: All operators
-      // -----------------------------
       const allOperators = await User.find({ role: "operator" }).lean();
-
       for (const op of allOperators) {
         const pendingForDate = op.assignedFabrics.filter(a => {
           const assigned = new Date(a.assignedDate);
           assigned.setHours(0, 0, 0, 0);
           return a.status === "Pending" && assigned.getTime() === selectedDate.getTime();
         });
-
         assignedData.push(...pendingForDate);
       }
     }
@@ -317,19 +301,14 @@ export const getOperatorAssignedFabrics = async (req, res) => {
       });
     }
 
-    // 3️⃣ Get all fabric process IDs
     const ids = assignedData.map(a => a.fabricProcess);
 
-    // 4️⃣ Fetch fabric processes with customer details
-    let fabrics = await listProcess
-      .find({ _id: { $in: ids }, status: "Pending" })
+    let fabrics = await listProcess.find({ _id: { $in: ids }, status: "Pending" })
       .populate("customer")
       .lean();
 
-    // 5️⃣ Sort by machine order
     fabrics.sort((a, b) => a.order - b.order);
 
-    // 6️⃣ Mark first pending fabric as canStart
     let first = false;
     fabrics = fabrics.map(f => {
       if (!first && f.status === "Pending") {
@@ -338,10 +317,14 @@ export const getOperatorAssignedFabrics = async (req, res) => {
       } else {
         f.canStart = false;
       }
-      return f;
+      return {
+        ...f,
+        date: toIST(f.date),
+        createdAt: toIST(f.createdAt),
+        updatedAt: toIST(f.updatedAt)
+      };
     });
 
-    // 7️⃣ Return response
     return res.status(200).json({
       success: true,
       count: fabrics.length,
@@ -697,6 +680,7 @@ export const getMachineQueue = async (req, res) => {
     return res.status(500).json({ message: "Server Error" });
   }
 };
+
 export const getPendingForAllOperators = async (req, res) => {
   try {
     const pending = await listProcess
@@ -709,13 +693,11 @@ export const getPendingForAllOperators = async (req, res) => {
       })
       .sort({ machineNo: 1, order: 1 }) // machine-wise + order-wise sorting
       .lean();
-
     return res.status(200).json({
       success: true,
       count: pending.length,
       pending
     });
-
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Server Error" });
@@ -726,46 +708,48 @@ export const getFabricsByMachine = async (req, res) => {
     const { machineNo } = req.query;
 
     if (!machineNo) {
-      return res.status(400).json({
-        success: false,
-        message: "Machine number is required",
-      });
+      return res.status(400).json({ success: false, message: "Machine number is required" });
     }
 
-    let filter = { machineNo };
     const userRole = req.user?.role;
+    let filter = { machineNo };
 
-    // Operator sees only today's IST date
     if (userRole === "operator") {
-      const todayIST = getISTMidnight();
-      filter.date = todayIST;
+      const today = getLocalMidnight(new Date());
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+
+      filter.date = { $gte: today, $lt: tomorrow };
     }
 
-    const fabricList = await listProcess
-      .find(filter)
-      .sort({ orderNo: 1 })    // 🔥 FIXED: Sort by orderNo
-      .lean();
+    const fabricList = await listProcess.find(filter).sort({ orderNo: 1 }).lean();
 
     if (!fabricList.length) {
       return res.status(404).json({
         success: false,
-        message: "No fabrics assigned for you today",
+        message: userRole === "operator"
+          ? "No fabrics assigned today"
+          : "No fabrics found for this machine"
       });
     }
+
+    // Convert dates to IST
+    const dataWithIST = fabricList.map(f => ({
+      ...f,
+      date: toIST(f.date),
+      createdAt: toIST(f.createdAt),
+      updatedAt: toIST(f.updatedAt)
+    }));
 
     return res.status(200).json({
       success: true,
       machineNo,
       count: fabricList.length,
-      data: fabricList,
+      data: dataWithIST
     });
 
   } catch (error) {
     console.error("Error fetching fabrics by machine:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Server Error",
-      error: error.message,
-    });
+    return res.status(500).json({ success: false, message: "Server Error", error: error.message });
   }
 };
