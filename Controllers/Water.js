@@ -20,37 +20,25 @@ export const startWaterProcess = async (req, res) => {
     if (!receiverNo)
       return res.status(400).json({ message: "receiverNo is required" });
 
-    // 1) Get operator
-    const operator = await User.findById(req.user.id);
-    if (!operator)
-      return res.status(403).json({ message: "Operator not found" });
-
-    // 2) Find the task for this receiverNo and operator
+    // 1) Find the task only by receiverNo
     const task = await FabricProcess.findOne({
-      receiverNo,
-      operator: operator.name,
+      receiverNo: receiverNo,
       status: "Pending"
     });
 
     if (!task)
-      return res.status(400).json({ message: "No pending task found for this receiverNo" });
+      return res.status(400).json({
+        message: "No pending task found for this receiverNo"
+      });
 
-    // 3) Check priority order: ensure it is the next task
-    const nextPending = await FabricProcess.find({
-      operator: operator.name,
-      status: "Pending"
-    }).sort({ order: 1 });
-
-    if (nextPending.length && nextPending[0]._id.toString() !== task._id.toString())
-      return res.status(400).json({ message: `You must complete order ${nextPending[0].order} first` });
-
-    // 4) Create water process
+    // 3) Create water process
     const water = await Water.create({
       receiverNo: task.receiverNo,
       openingReading,
       startTime: new Date(),
       status: "Running",
       runningTime: 0,
+      startedBy: userName,
       history: [
         {
           action: "Process Started",
@@ -61,24 +49,27 @@ export const startWaterProcess = async (req, res) => {
       ]
     });
 
-    // 5) Update operator assignedFabrics
-    await User.updateOne(
-      { _id: operator._id, "assignedFabrics.fabricProcess": task._id },
-      { $set: { "assignedFabrics.$.status": "Running", "assignedFabrics.$.startTime": new Date() } }
+    // 4) Update fabric process status
+    await FabricProcess.updateOne(
+      { _id: task._id },
+      {
+        status: "Running",
+        operator: userName // optional — remove if you don't want to track operator
+      }
     );
 
-    // 6) Update fabric process status
-    await FabricProcess.updateOne({ _id: task._id }, { status: "Running" });
-
     return res.status(201).json({
-      message: "Water process started",
+      message: "Water process started successfully",
       water,
       startedTask: task
     });
 
   } catch (error) {
     console.error("Start Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message
+    });
   }
 };
 /* ===========================================================
@@ -87,37 +78,13 @@ export const startWaterProcess = async (req, res) => {
 export const pauseWaterProcess = async (req, res) => {
   try {
     const { receiverNo, remarks } = req.body;
-    const userName = req.user?.name || "System";
-
-    const operator = await User.findById(req.user.id);
-    if (!operator) return res.status(403).json({ message: "Operator not found" });
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const assignedToday = operator.assignedFabrics
-      .filter(a => {
-        const d = new Date(a.assignedDate);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime() === today.getTime() && ["Running"].includes(a.status);
-      })
-      .sort((a, b) => a.order - b.order);
-
-    if (!assignedToday.length)
-      return res.status(400).json({ message: "No running tasks to pause" });
-
-    const firstTask = assignedToday[0];
-
-    const fabric = await FabricProcess.findById(firstTask.fabricProcess);
-
-    if (fabric.receiverNo !== receiverNo)
-      return res.status(400).json({ message: "Pause only first active task" });
+    const userName = req.user?.name || "System"; // operator performing action
 
     const water = await Water.findOne({ receiverNo });
     if (!water) return res.status(404).json({ message: "Water record not found" });
 
     if (water.status !== "Running")
-      return res.status(400).json({ message: "Process not running" });
+      return res.status(400).json({ message: "Process is not Running" });
 
     // Calculate running time
     const now = new Date();
@@ -131,23 +98,17 @@ export const pauseWaterProcess = async (req, res) => {
 
     await water.save();
 
-    // Update User task
-    await User.updateOne(
-      { _id: operator._id, "assignedFabrics.fabricProcess": fabric._id },
-      { $set: { "assignedFabrics.$.status": "Paused" } }
-    );
-
-    // Update Fabric Status
+    // Update Fabric status only
     await FabricProcess.updateOne(
-      { _id: fabric._id },
+      { receiverNo },
       { status: "Paused" }
     );
 
-    res.status(200).json({ message: "Water process paused", water });
+    return res.status(200).json({ message: "Water process paused", water });
 
   } catch (error) {
     console.error("Pause Error:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -162,39 +123,16 @@ export const stopWaterProcess = async (req, res) => {
     const { receiverNo, closingReading } = req.body;
     const userName = req.user?.name || "System";
 
-    /* -------------------------------------------------------
-       1) Fetch the fabric using receiverNo directly
-    -------------------------------------------------------- */
-    const cleanInput = receiverNo.replace(/\s+/g, "").toLowerCase();
-
     const fabric = await FabricProcess.findOne({
       receiverNo: { $regex: new RegExp(`^${receiverNo}$`, "i") }
     });
 
-    if (!fabric)
-      return res.status(404).json({ message: "Fabric not found" });
+    if (!fabric) return res.status(404).json({ message: "Fabric not found" });
 
-    const cleanFabric = fabric.receiverNo.replace(/\s+/g, "").toLowerCase();
-
-    if (cleanInput !== cleanFabric) {
-      return res.status(400).json({
-        message: "Receiver number mismatch"
-      });
-    }
-
-    /* -------------------------------------------------------
-       2) Fetch water process
-    -------------------------------------------------------- */
     const water = await Water.findOne({ receiverNo: fabric.receiverNo });
+    if (!water) return res.status(404).json({ message: "Water record not found" });
 
-    if (!water)
-      return res.status(404).json({ message: "Water record not found" });
-
-    /* -------------------------------------------------------
-       3) Finalize water process
-    -------------------------------------------------------- */
     const now = new Date();
-
     if (water.startTime)
       water.runningTime += (now - water.startTime) / 1000 / 60;
 
@@ -211,18 +149,13 @@ export const stopWaterProcess = async (req, res) => {
 
     await water.save();
 
-    /* -------------------------------------------------------
-       4) Update Fabric to Completed
-    -------------------------------------------------------- */
+    // Update Fabric status only
     await FabricProcess.updateOne(
       { _id: fabric._id },
       { status: "Completed" }
     );
 
-    return res.status(200).json({
-      message: "Water process stopped successfully",
-      water
-    });
+    return res.status(200).json({ message: "Water process stopped successfully", water });
 
   } catch (error) {
     console.error("STOP ERROR:", error);
@@ -236,29 +169,23 @@ export const stopWaterProcess = async (req, res) => {
 export const calculateWaterCost = async (req, res) => {
   try {
     const { id } = req.body;
-    const user = req.user?.name || "Unknown User";
+    const userName = req.user?.name || "Unknown User";
 
     const water = await Water.findById(id);
     if (!water) return res.status(404).json({ message: "Water process not found" });
 
-    const customer = await CustomerDetails.findOne({
-      receiverNo: water.receiverNo
-    });
-
-    if (!customer)
-      return res.status(404).json({ message: "Customer details not found" });
+    const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
+    if (!customer) return res.status(404).json({ message: "Customer details not found" });
 
     const weight = customer.weight || 1;
-
     const units = (water.closingReading || 0) - (water.openingReading || 0);
-
     water.totalWaterCost = Number(((units / weight) * 0.4).toFixed(2));
 
     addWaterHistory(
       water,
       "Water Cost Calculated",
       { totalWaterCost: water.totalWaterCost },
-      user
+      userName
     );
 
     await water.save();
@@ -270,6 +197,7 @@ export const calculateWaterCost = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Cost Error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
