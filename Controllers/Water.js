@@ -1,11 +1,189 @@
+import Water from "../Models/Water.js";
+import FabricProcess from "../Models/list.js";
+import CustomerDetails from "../Models/Customer.js";
+
+/* -----------------------------------------------------
+   Helper: Add History Entry
+----------------------------------------------------- */
+const addWaterHistory = (water, action, changes = {}, user = "System") => {
+  if (!water.history) water.history = [];
+  water.history.push({
+    action,
+    changes,
+    user,
+    date: new Date()
+  });
+};
+
+/* =====================================================
+   START WATER PROCESS
+===================================================== */
+export const startWaterProcess = async (req, res) => {
+  try {
+    const { receiverNo, openingReading } = req.body;
+    const userName = req.user?.name || "System";
+
+    if (!receiverNo) {
+      return res.status(400).json({ message: "receiverNo is required" });
+    }
+
+    // Only start if fabric is in Pending state
+    const fabric = await FabricProcess.findOne({
+      receiverNo,
+      status: "Pending"
+    });
+
+    if (!fabric) {
+      return res.status(404).json({
+        message: "No pending task found for this receiverNo"
+      });
+    }
+
+    // Create Water Process
+    const water = await Water.create({
+      receiverNo,
+      openingReading,
+      startTime: new Date(),
+      status: "Running",
+      runningTime: 0,
+      startedBy: userName,
+      operator: userName,   // Store Operator Here
+      history: [
+        {
+          action: "Process Started",
+          changes: { openingReading },
+          user: userName,
+          date: new Date()
+        }
+      ]
+    });
+
+    // Update Fabric Process
+    await FabricProcess.updateOne(
+      { _id: fabric._id },
+      {
+        status: "Running",
+        operator: userName   // Also store operator here ✨
+      }
+    );
+
+    return res.status(201).json({
+      message: "Water process started successfully",
+      water,
+      fabric
+    });
+
+  } catch (error) {
+    console.error("START ERROR:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/* =====================================================
+   PAUSE WATER PROCESS
+===================================================== */
+export const pauseWaterProcess = async (req, res) => {
+  try {
+    const { receiverNo, remarks } = req.body;
+    const userName = req.user?.name || "System";
+
+    const water = await Water.findOne({ receiverNo });
+    if (!water) return res.status(404).json({ message: "Water record not found" });
+
+    if (water.status !== "Running") {
+      return res.status(400).json({ message: "Process is not Running" });
+    }
+
+    const now = new Date();
+    if (water.startTime) {
+      water.runningTime += (now - water.startTime) / 60000; // ms → minutes
+    }
+
+    water.status = "Paused";
+    water.remarks = remarks;
+
+    addWaterHistory(water, "Paused", { runningTime: water.runningTime }, userName);
+
+    await water.save();
+
+    // Update Fabric status
+    await FabricProcess.updateOne(
+      { receiverNo },
+      { status: "Paused" }
+    );
+
+    return res.status(200).json({
+      message: "Water process paused",
+      water
+    });
+
+  } catch (error) {
+    console.error("PAUSE ERROR:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/* =====================================================
+   STOP WATER PROCESS
+===================================================== */
+export const stopWaterProcess = async (req, res) => {
+  try {
+    const { receiverNo, closingReading } = req.body;
+    const userName = req.user?.name || "System";
+
+    const fabric = await FabricProcess.findOne({
+      receiverNo: { $regex: new RegExp(`^${receiverNo}$`, "i") }
+    });
+
+    if (!fabric) return res.status(404).json({ message: "Fabric not found" });
+
+    const water = await Water.findOne({ receiverNo: fabric.receiverNo });
+    if (!water) return res.status(404).json({ message: "Water record not found" });
+
+    const now = new Date();
+    if (water.startTime) {
+      water.runningTime += (now - water.startTime) / 60000;
+    }
+
+    water.status = "Completed";
+    water.endTime = now;
+    water.closingReading = closingReading;
+
+    addWaterHistory(
+      water,
+      "Completed",
+      { closingReading, runningTime: water.runningTime },
+      userName
+    );
+
+    await water.save();
+
+    await FabricProcess.updateOne(
+      { _id: fabric._id },
+      { status: "Completed" }
+    );
+
+    return res.status(200).json({
+      message: "Water process stopped successfully",
+      water
+    });
+
+  } catch (error) {
+    console.error("STOP ERROR:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/* =====================================================
+   CALCULATE WATER COST
+===================================================== */
 export const calculateWaterCost = async (req, res) => {
   try {
     const { id } = req.body;
-    const userName = req.user?.name || "Unknown User";
+    const userName = req.user?.name || "Unknown";
 
     const water = await Water.findById(id);
-    if (!water)
-      return res.status(404).json({ message: "Water process not found" });
+    if (!water) return res.status(404).json({ message: "Water process not found" });
 
     const customer = await CustomerDetails.findOne({
       receiverNo: water.receiverNo
@@ -15,12 +193,9 @@ export const calculateWaterCost = async (req, res) => {
       return res.status(404).json({ message: "Customer details not found" });
 
     const weight = customer.weight || 1;
-    const units =
-      (water.closingReading || 0) - (water.openingReading || 0);
+    const units = (water.closingReading || 0) - (water.openingReading || 0);
 
     let cost = Number(((units / weight) * 0.4).toFixed(2));
-
-    // 🔥 FIX: Never allow negative cost
     if (isNaN(cost) || cost < 0) cost = 0;
 
     water.totalWaterCost = cost;
@@ -41,7 +216,7 @@ export const calculateWaterCost = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Cost Error:", error);
+    console.error("COST ERROR:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
