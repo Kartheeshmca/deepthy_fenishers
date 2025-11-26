@@ -27,17 +27,35 @@ export const createFabricProcess = async (req, res) => {
       return res.status(400).json({ success: false, message: "Required fields missing" });
     }
 
+    if (!orderNo || orderNo < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Order number must be greater than 0"
+      });
+    }
     const customer = await CustomerDetails.findOne({ receiverNo });
     if (!customer) {
       return res.status(404).json({ success: false, message: "Receiver number not found" });
     }
 
-    // Prevent duplicate order numbers for same machine
-    const existingOrder = await listProcess.findOne({ machineNo, orderNo });
+    // -----------------------------------------
+    // 🔥 Convert date to UTC midnight (IST logic)
+    // -----------------------------------------
+    const formattedDate = getLocalMidnight(date);
+
+    // ------------------------------------------------------
+    // 🔥 Check orderNo unique for same Machine + Same Date
+    // ------------------------------------------------------
+    const existingOrder = await listProcess.findOne({
+      machineNo,
+      orderNo,
+      date: formattedDate   // same date only
+    });
+
     if (existingOrder) {
       return res.status(400).json({
         success: false,
-        message: `Order number ${orderNo} already exists for Machine ${machineNo}`
+        message: `Order number ${orderNo} already exists for Machine ${machineNo} on this date`
       });
     }
 
@@ -53,12 +71,11 @@ export const createFabricProcess = async (req, res) => {
       shiftincharge,
       orderNo,
       createdBy: req.user._id,
-      date: getLocalMidnight(date), // Save as midnight UTC
+      date: formattedDate,
     };
 
     const processEntry = await listProcess.create(processData);
 
-    // Convert dates to IST for response
     const responseEntry = {
       ...processEntry.toObject(),
       date: toIST(processEntry.date),
@@ -337,48 +354,87 @@ export const getOperatorAssignedFabrics = async (req, res) => {
   }
 };
 
-/* ============================================================================
-// UPDATE FABRIC PROCESS
-============================================================================ */
 export const updateFabricProcess = async (req, res) => {
   try {
-    const { receiverNo } = req.params;   // 🔥 Use receiverNo instead of id
+    const { id } = req.params;
     const updates = req.body;
 
-    const fabric = await listProcess.findOne({ receiverNo });
+    const fabric = await listProcess.findById(id);
     if (!fabric) {
-      return res.status(404).json({ success: false, message: "Process not found for this Receiver No" });
+      return res.status(404).json({
+        success: false,
+        message: "Process not found for this ID"
+      });
     }
 
-    // ------------------------------
-    // 🔥 ORDER UPDATE HANDLING
-    // ------------------------------
-    if (updates.order && updates.order !== fabric.order) {
+    const newOrderNo = updates.orderNo ?? fabric.orderNo;
+    const newMachine = updates.machineNo ?? fabric.machineNo;
+    const newDate = updates.date ? getLocalMidnight(updates.date) : fabric.date;
+
+    // ---------------------------------------------------------
+    // ❌ ORDER NO MUST NOT BE ZERO
+    // ---------------------------------------------------------
+    if (!newOrderNo || newOrderNo < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Order number must be greater than 0"
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 🔥 CHECK UNIQUE ORDER NO FOR SAME MACHINE + SAME DATE
+    // ---------------------------------------------------------
+    const existingOrder = await listProcess.findOne({
+      _id: { $ne: id },
+      machineNo: newMachine,
+      date: newDate,
+      orderNo: newOrderNo
+    });
+
+    if (existingOrder) {
+      return res.status(400).json({
+        success: false,
+        message: `OrderNo ${newOrderNo} already exists for Machine ${newMachine} on this date`
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 🔥 ORDER SHIFTING INSIDE SAME MACHINE + DATE
+    // ---------------------------------------------------------
+    if (updates.orderNo && updates.orderNo !== fabric.orderNo) {
       await listProcess.updateMany(
         {
-          operator: fabric.operator,
-          order: { $gte: updates.order }
+          machineNo: newMachine,
+          date: newDate,
+          orderNo: { $gte: updates.orderNo }
         },
-        { $inc: { order: 1 } }
+        {
+          $inc: { orderNo: 1 }
+        }
       );
     }
 
-    // ------------------------------
-    // 🔥 IF RECEIVER NO UPDATED
-    // ------------------------------
+    // ---------------------------------------------------------
+    // 🔥 RECEIVER NUMBER UPDATE
+    // ---------------------------------------------------------
     if (updates.receiverNo && updates.receiverNo !== fabric.receiverNo) {
       await User.updateMany(
-        { "assignedFabrics.receiverNo": receiverNo },
+        { "assignedFabrics.receiverNo": fabric.receiverNo },
         { $set: { "assignedFabrics.$.receiverNo": updates.receiverNo } }
       );
     }
 
+    // ---------------------------------------------------------
+    // 🔥 APPLY UPDATES (including date conversion)
+    // ---------------------------------------------------------
+    if (updates.date) updates.date = newDate;
     Object.assign(fabric, updates);
 
     fabric.history.push({
       action: "Updated",
       changes: updates,
-      user: req.user?.name || "System"
+      user: req.user?.name || "System",
+      date: new Date()
     });
 
     await fabric.save();
@@ -390,26 +446,32 @@ export const updateFabricProcess = async (req, res) => {
     });
 
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
+
+
 export const deleteFabricProcess = async (req, res) => {
   try {
-    const { receiverNo } = req.params;   // 🔥 Use receiverNo instead of id
+    const { id } = req.params;   // 🔥 Delete using _id
 
-    const fabric = await listProcess.findOne({ receiverNo });
+    const fabric = await listProcess.findById(id);
     if (!fabric) {
       return res.status(404).json({
         success: false,
-        message: "Process not found for this Receiver No"
+        message: "Process not found for this ID"
       });
     }
 
+    const receiverNo = fabric.receiverNo;
     const operator = fabric.operator;
     const order = fabric.order;
 
     // ------------------------------------
-    // 🔥 REMOVE ASSIGNMENTS FROM ALL OPERATORS
+    // 🔥 REMOVE ASSIGNMENTS FROM OPERATORS
     // ------------------------------------
     await User.updateMany(
       {},
@@ -417,12 +479,12 @@ export const deleteFabricProcess = async (req, res) => {
     );
 
     // ------------------------------------
-    // 🔥 DELETE THE FABRIC PROCESS
+    // 🔥 DELETE PROCESS
     // ------------------------------------
-    await listProcess.deleteOne({ receiverNo });
+    await listProcess.findByIdAndDelete(id);
 
     // ------------------------------------
-    // 🔥 FIX ORDER FOR REMAINING PROCESSES
+    // 🔥 FIX ORDER OF REMAINING ITEMS
     // ------------------------------------
     await listProcess.updateMany(
       { operator, order: { $gt: order } },
