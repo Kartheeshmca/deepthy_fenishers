@@ -111,7 +111,7 @@ router.post(
 
 // Update
 router.put(
-  "/update/:recieverNo",
+  "/update/:id",
   protect,
   roleCheck(["admin", "owner"]),
   updateFabricProcess
@@ -119,7 +119,7 @@ router.put(
 
 // Delete
 router.delete(
-  "/delete/:receiverNo",
+  "/delete/:id",
   protect,
   roleCheck(["admin", "owner"]),
   deleteFabricProcess
