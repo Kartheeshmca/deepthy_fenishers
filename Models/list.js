@@ -33,6 +33,7 @@ const fabricProcessSchema = new mongoose.Schema({
   chemicals: { type: [chemicalSchema], default: [] },
   history: { type: [historySchema], default: [] },
   cycle: { type: Number, default: 1 },
+  operator: { type: String, default: "" },
   status: { type: String, enum: ["Pending","Running","Paused","Completed"], default: "Pending" }
 }, { timestamps: true });
 
