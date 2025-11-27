@@ -59,18 +59,20 @@ export const startWaterProcess = async (req, res) => {
     });
 
     // Update Fabric Process
-    await FabricProcess.updateOne(
-      { _id: fabric._id },
+    const updatedFabric = await FabricProcess.findByIdAndUpdate(
+      fabric._id,
       {
         status: "Running",
-        operator: userName   // Also store operator here ✨
-      }
+        operator: userName
+      },
+      { new: true }
     );
 
     return res.status(201).json({
       message: "Water process started successfully",
       water,
-      fabric
+      fabric: updatedFabric
+
     });
 
   } catch (error) {
@@ -238,7 +240,8 @@ export const calculateWaterCost = async (req, res) => {
     const userName = req.user?.name || "Unknown";
 
     const water = await Water.findById(id);
-    if (!water) return res.status(404).json({ message: "Water process not found" });
+    if (!water)
+      return res.status(404).json({ message: "Water process not found" });
 
     const customer = await CustomerDetails.findOne({
       receiverNo: water.receiverNo
@@ -248,16 +251,20 @@ export const calculateWaterCost = async (req, res) => {
       return res.status(404).json({ message: "Customer details not found" });
 
     const weight = customer.weight || 1;
-    const units = (water.closingReading || 0) - (water.openingReading || 0);
+    const units =
+      (water.closingReading || 0) - (water.openingReading || 0);
 
     let cost = Number(((units / weight) * 0.4).toFixed(2));
     if (isNaN(cost) || cost < 0) cost = 0;
 
     water.totalWaterCost = cost;
 
+    // 🔥 Change status to Completed
+    water.status = "Completed";
+
     addWaterHistory(
       water,
-      "Water Cost Calculated",
+      "Completed",
       { totalWaterCost: water.totalWaterCost },
       userName
     );
@@ -265,13 +272,16 @@ export const calculateWaterCost = async (req, res) => {
     await water.save();
 
     return res.status(200).json({
-      message: "Water cost calculated",
+      message: "Water cost calculated & process marked as Completed",
       water,
       runningTime: water.runningTime.toFixed(2) + " minutes"
     });
 
   } catch (error) {
     console.error("COST ERROR:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message
+    });
   }
 };
