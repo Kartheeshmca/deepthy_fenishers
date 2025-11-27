@@ -234,47 +234,127 @@ export const stopWaterProcess = async (req, res) => {
 /* =====================================================
    CALCULATE WATER COST
 ===================================================== */
+// export const calculateWaterCost = async (req, res) => {
+//   try {
+//     const { id } = req.body;
+//     const userName = req.user?.name || "Unknown";
+
+//     const water = await Water.findById(id);
+//     if (!water)
+//       return res.status(404).json({ message: "Water process not found" });
+
+//     const customer = await CustomerDetails.findOne({
+//       receiverNo: water.receiverNo
+//     });
+
+//     if (!customer)
+//       return res.status(404).json({ message: "Customer details not found" });
+
+//     const weight = customer.weight || 1;
+//     const units =
+//       (water.closingReading || 0) - (water.openingReading || 0);
+
+//     let cost = Number(((units / weight) * 0.4).toFixed(2));
+//     if (isNaN(cost) || cost < 0) cost = 0;
+
+//     water.totalWaterCost = cost;
+
+//     water.status = "Completed";
+
+//     addWaterHistory(
+//       water,
+//       "Completed",
+//       { totalWaterCost: water.totalWaterCost },
+//       userName
+//     );
+
+//     await water.save();
+
+//     return res.status(200).json({
+//       message: "Water cost calculated & process marked as Completed",
+//       water,
+//       runningTime: water.runningTime.toFixed(2) + " minutes"
+//     });
+
+//   } catch (error) {
+//     console.error("COST ERROR:", error);
+//     return res.status(500).json({
+//       message: "Server error",
+//       error: error.message
+//     });
+//   }
+// };
 export const calculateWaterCost = async (req, res) => {
   try {
     const { id } = req.body;
     const userName = req.user?.name || "Unknown";
 
+    // 1️⃣ Get Water Process
     const water = await Water.findById(id);
     if (!water)
       return res.status(404).json({ message: "Water process not found" });
 
+    // 2️⃣ Get Customer Details to calculate water cost
     const customer = await CustomerDetails.findOne({
       receiverNo: water.receiverNo
     });
 
     if (!customer)
-      return res.status(404).json({ message: "Customer details not found" });
+      return res
+        .status(404)
+        .json({ message: "Customer details not found" });
 
     const weight = customer.weight || 1;
     const units =
       (water.closingReading || 0) - (water.openingReading || 0);
 
+    // 3️⃣ Calculate cost
     let cost = Number(((units / weight) * 0.4).toFixed(2));
     if (isNaN(cost) || cost < 0) cost = 0;
 
     water.totalWaterCost = cost;
 
-    // 🔥 Change status to Completed
+    // 🔥 4️⃣ MARK WATER AS COMPLETED
     water.status = "Completed";
 
+    // Save history for water
     addWaterHistory(
       water,
-      "Completed",
-      { totalWaterCost: water.totalWaterCost },
+      "Water Process Completed",
+      {
+        closingReading: water.closingReading,
+        unitsUsed: units,
+        totalWaterCost: cost
+      },
       userName
     );
 
     await water.save();
 
+    // 5️⃣ FIND FABRIC PROCESS AND MARK COMPLETED
+    const fabric = await FabricProcess.findOne({
+      receiverNo: water.receiverNo
+    });
+
+    if (fabric) {
+      fabric.status = "Completed";
+      fabric.operator = water.operator; // keep operator same
+
+      fabric.history.push({
+        action: "Fabric Completed",
+        changes: { waterCost: cost },
+        user: userName,
+        date: new Date()
+      });
+
+      await fabric.save();
+    }
+
     return res.status(200).json({
-      message: "Water cost calculated & process marked as Completed",
+      message: "Water & Fabric marked as Completed",
       water,
-      runningTime: water.runningTime.toFixed(2) + " minutes"
+      fabric,
+      runningTime: (water.runningTime || 0).toFixed(2) + " minutes"
     });
 
   } catch (error) {
