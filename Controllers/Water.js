@@ -84,31 +84,119 @@ export const startWaterProcess = async (req, res) => {
 /* =====================================================
    PAUSE WATER PROCESS
 ===================================================== */
+// export const pauseWaterProcess = async (req, res) => {
+//   try {
+//     const { id } = req.params; // <-- use ID from URL
+//     const { remarks } = req.body;
+//     const userName = req.user?.name || "System";
+
+//     // Find water process by ID
+//     const water = await Water.findById(id);
+//     if (!water) return res.status(404).json({ message: "Water record not found" });
+
+//     /* -----------------------------------------------------
+//        CASE 1: PROCESS IS RUNNING → PAUSE IT
+//     ----------------------------------------------------- */
+//     if (water.status === "Running") {
+//       const now = new Date();
+
+//       // Add running time until now
+//       if (water.startTime) {
+//         water.runningTime += (now - new Date(water.startTime)) / 60000;
+//         water.runningTime = Number(water.runningTime.toFixed(2));
+//       }
+
+//       // Update to Paused
+//       water.status = "Paused";
+//       water.startTime = null;
+//       water.remarks = remarks;
+
+//       addWaterHistory(
+//         water,
+//         "Paused",
+//         { runningTime: water.runningTime, remarks },
+//         userName
+//       );
+
+//       await water.save();
+
+//       // Optionally, update related FabricProcess by receiverNo
+//       if (water.receiverNo) {
+//         await FabricProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Paused" });
+//       }
+
+//       return res.status(200).json({
+//         message: "Water process paused",
+//         water
+//       });
+//     }
+
+//     /* -----------------------------------------------------
+//        CASE 2: PROCESS IS PAUSED → RESUME IT
+//     ----------------------------------------------------- */
+//     if (water.status === "Paused") {
+//       water.startTime = new Date();
+//       water.status = "Running";
+//       water.remarks = remarks;
+
+//       addWaterHistory(
+//         water,
+//         "Resumed",
+//         { remarks },
+//         userName
+//       );
+
+//       await water.save();
+
+//       // Optionally, update related FabricProcess by receiverNo
+//       if (water.receiverNo) {
+//         await FabricProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Running" , runningtime: water.runningTime });
+//       }
+
+//       return res.status(200).json({
+//         message: "Water process resumed",
+//         water
+//       });
+//     }
+
+//     /* -----------------------------------------------------
+//        IF OTHER STATUS
+//     ----------------------------------------------------- */
+//     return res.status(400).json({
+//       message: `Cannot toggle when status is ${water.status}`
+//     });
+
+//   } catch (error) {
+//     console.error("TOGGLE ERROR:", error);
+//     return res.status(500).json({ message: "Server error", error: error.message });
+//   }
+// };
 export const pauseWaterProcess = async (req, res) => {
   try {
-    const { id } = req.params; // <-- use ID from URL
+    const { id } = req.params; 
     const { remarks } = req.body;
     const userName = req.user?.name || "System";
 
-    // Find water process by ID
-    const water = await Water.findById(id);
-    if (!water) return res.status(404).json({ message: "Water record not found" });
+    let water = await Water.findById(id);
+    if (!water)
+      return res.status(404).json({ message: "Water record not found" });
+
+    const now = new Date();
 
     /* -----------------------------------------------------
-       CASE 1: PROCESS IS RUNNING → PAUSE IT
+       CASE 1: RUNNING → PAUSE
     ----------------------------------------------------- */
     if (water.status === "Running") {
-      const now = new Date();
 
-      // Add running time until now
+      // Calculate running time up to this pause moment
       if (water.startTime) {
-        water.runningTime += (now - new Date(water.startTime)) / 60000;
-        water.runningTime = Number(water.runningTime.toFixed(2));
+        const minutes = (now - new Date(water.startTime)) / 60000;
+        water.runningTime = Number((water.runningTime + minutes).toFixed(2));
       }
 
-      // Update to Paused
+      // Pause the process
       water.status = "Paused";
-      water.startTime = null;
+      water.startTime = null;               // Freeze timer
       water.remarks = remarks;
 
       addWaterHistory(
@@ -120,23 +208,29 @@ export const pauseWaterProcess = async (req, res) => {
 
       await water.save();
 
-      // Optionally, update related FabricProcess by receiverNo
+      // Update related FabricProcess
       if (water.receiverNo) {
-        await FabricProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Paused" });
+        await FabricProcess.updateOne(
+          { receiverNo: water.receiverNo },
+          { status: "Paused", runningTime: water.runningTime }
+        );
       }
 
       return res.status(200).json({
         message: "Water process paused",
+        runningTime: water.runningTime,   // <-- RETURNED ALWAYS
         water
       });
     }
 
     /* -----------------------------------------------------
-       CASE 2: PROCESS IS PAUSED → RESUME IT
+       CASE 2: PAUSED → RESUME
     ----------------------------------------------------- */
     if (water.status === "Paused") {
-      water.startTime = new Date();
+
+      // Resume timer (do NOT reset runningTime)
       water.status = "Running";
+      water.startTime = new Date();        // Start counting from now
       water.remarks = remarks;
 
       addWaterHistory(
@@ -148,20 +242,21 @@ export const pauseWaterProcess = async (req, res) => {
 
       await water.save();
 
-      // Optionally, update related FabricProcess by receiverNo
+      // Update fabric process
       if (water.receiverNo) {
-        await FabricProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Running" });
+        await FabricProcess.updateOne(
+          { receiverNo: water.receiverNo },
+          { status: "Running", runningTime: water.runningTime }
+        );
       }
 
       return res.status(200).json({
         message: "Water process resumed",
+        runningTime: water.runningTime,    // <-- STILL RETURNED
         water
       });
     }
 
-    /* -----------------------------------------------------
-       IF OTHER STATUS
-    ----------------------------------------------------- */
     return res.status(400).json({
       message: `Cannot toggle when status is ${water.status}`
     });
@@ -215,7 +310,9 @@ export const stopWaterProcess = async (req, res) => {
     if (water.receiverNo) {
       await FabricProcess.updateOne(
         { receiverNo: water.receiverNo },
-        { status: "Freezed" }
+        { status: "Freezed",
+          runningTime: water.runningTime 
+         }
       );
     }
 
@@ -336,19 +433,22 @@ export const calculateWaterCost = async (req, res) => {
       receiverNo: water.receiverNo
     });
 
-    if (fabric) {
-      fabric.status = "Completed";
-      fabric.operator = water.operator; // keep operator same
+   if (fabric) {
+  fabric.status = "Completed";
+  fabric.operator = water.operator;
 
-      fabric.history.push({
-        action: "Fabric Completed",
-        changes: { waterCost: cost },
-        user: userName,
-        date: new Date()
-      });
+  fabric.waterCost = cost; // ⭐ store for getAllFabricProcesses()
+  fabric.runningTime= water.runningTime
+  fabric.history.push({
+    action: "Fabric Completed",
+    changes: { waterCost: cost , runningTime: water.runningTime},
+    user: userName,
+    date: new Date()
+  });
 
-      await fabric.save();
-    }
+  await fabric.save();
+}
+
 
     return res.status(200).json({
       message: "Water & Fabric marked as Completed",
