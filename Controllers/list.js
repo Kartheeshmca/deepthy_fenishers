@@ -504,21 +504,41 @@ export const deleteFabricProcess = async (req, res) => {
 /* ============================================================================
 // ALL FABRIC PROCESSES
 ============================================================================ */
+
+
 export const getAllFabricProcesses = async (req, res) => {
   try {
     const filter = {};
     if (req.query.status) filter.status = req.query.status;
     if (req.query.operator) filter.operator = req.query.operator;
 
+    // Fetch Fabric processes
     const list = await listProcess
       .find(filter)
       .sort({ order: 1 })
       .populate("customer");
 
+    // Attach water info to each fabric
+    const listWithWater = await Promise.all(
+      list.map(async (fabric) => {
+        const water = await Water.findOne({ receiverNo: fabric.receiverNo });
+        return {
+          ...fabric.toObject(),
+          water: water
+            ? {
+                runningTime: water.runningTime || 0,
+                remarks: water.remarks || "",
+                status: water.status || "Pending"
+              }
+            : null
+        };
+      })
+    );
+
     return res.status(200).json({
       success: true,
-      count: list.length,
-      data: list
+      count: listWithWater.length,
+      data: listWithWater
     });
 
   } catch (error) {
