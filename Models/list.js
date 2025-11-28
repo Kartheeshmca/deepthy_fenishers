@@ -28,6 +28,8 @@ const fabricProcessSchema = new mongoose.Schema({
   rate: { type: Number, required: true, min: 0 },
   totalCost: { type: Number, min: 0, default: 0 },
   shiftincharge: { type: String, required: true },
+  waterCost: { type: Number, default: 0 },
+  runningTime: { type: Number, default: 0 },      // in minutes
   orderNo: { type: Number, required: true },          // Sequence order
   dyes: { type: [dyeSchema], default: [] },
   chemicals: { type: [chemicalSchema], default: [] },
