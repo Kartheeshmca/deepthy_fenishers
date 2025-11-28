@@ -383,7 +383,7 @@ export const stopWaterProcess = async (req, res) => {
 // };
 export const calculateWaterCost = async (req, res) => {
   try {
-    const { id } = req.body;
+    const { id } = req.params;
     const userName = req.user?.name || "Unknown";
 
     // 1️⃣ Get Water Process
