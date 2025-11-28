@@ -34,7 +34,7 @@ router.post(
 );
 // Calculate Water Cost → Admin, Owner only
 router.post(
-  "/calc-cost",
+  "/calc-cost/:id",
   protect,
   roleCheck(["admin", "owner","operator"]),
   calculateWaterCost
