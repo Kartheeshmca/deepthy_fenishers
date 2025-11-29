@@ -13,6 +13,8 @@ const waterProcessSchema = new mongoose.Schema({
   runningTime: { type: Number, min: 0 },
   startTime: { type: Date },
   endTime: { type: Date },
+  startTimeFormatted: { type: String }, // e.g., "09:00 AM"
+  endTimeFormatted: { type: String },   // e.g., "10:00 PM"
   status: {
     type: String,
     enum: ["Pending", "Running", "Paused", "Freezed","Completed"],
@@ -30,6 +32,7 @@ const waterProcessSchema = new mongoose.Schema({
     type: String,
     default: () => new Date().toLocaleTimeString('en-GB', { hour12: false })
   }
+
 });
 
 const Water = mongoose.model("Water", waterProcessSchema);
