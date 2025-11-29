@@ -12,7 +12,8 @@ import {
   getFabricReportByMachine,
   getFabricReportByReceiver,
   addDyesAndChemicalsByReceiver,
-  getFabricsByMachine
+  getFabricsByMachine,
+  getAllMachineReports
 } from "../Controllers/list.js";
 
 import { protect, roleCheck } from "../Middleware/Auth.js";
@@ -91,6 +92,12 @@ router.get(
   protect,
   roleCheck(["admin", "owner"]),
   getFabricReportByMachine
+);
+router.get(
+  "/machinereport",
+  protect,
+  roleCheck(["admin", "owner"]),
+  getAllMachineReports
 );
 
 // Receiver report
