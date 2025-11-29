@@ -14,6 +14,9 @@ const addWaterHistory = (water, action, changes = {}, user = "System") => {
     date: new Date()
   });
 };
+const formatTime = (date) => {
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+};
 
 /* =====================================================
    START WATER PROCESS
@@ -38,12 +41,13 @@ export const startWaterProcess = async (req, res) => {
         message: "No pending task found for this receiverNo"
       });
     }
-
+    const now = new Date();
     // Create Water Process
     const water = await Water.create({
       receiverNo,
       openingReading,
       startTime: new Date(),
+      startTimeFormatted: formatTime(now),
       status: "Running",
       runningTime: 0,
       startedBy: userName,
@@ -295,6 +299,7 @@ export const stopWaterProcess = async (req, res) => {
     // Stop the process
     water.status = "Freezed"; // or "Completed" if you prefer
     water.endTime = now;
+    water.endTimeFormatted = formatTime(now);
     water.closingReading = closingReading;
 
     addWaterHistory(
