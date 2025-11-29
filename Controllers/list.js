@@ -519,18 +519,12 @@ export const getAllFabricProcesses = async (req, res) => {
       .populate("customer");
 
     // Attach water info to each fabric
-    const listWithWater = await Promise.all(
+   const listWithWater = await Promise.all(
       list.map(async (fabric) => {
         const water = await Water.findOne({ receiverNo: fabric.receiverNo });
         return {
           ...fabric.toObject(),
-          water: water
-            ? {
-                runningTime: water.runningTime || 0,
-                remarks: water.remarks || "",
-                status: water.status || "Pending"
-              }
-            : null
+          water: water ? water.toObject() : null
         };
       })
     );
@@ -833,5 +827,101 @@ export const getFabricsByMachine = async (req, res) => {
   } catch (error) {
     console.error("Error fetching fabrics by machine:", error);
     return res.status(500).json({ success: false, message: "Server Error", error: error.message });
+  }
+};
+export const getAllMachineReports = async (req, res) => {
+  try {
+    // 1️⃣ Load all machines from list.js
+    const fabricProcesses = await listProcess.find();
+    const machineToReceivers = {};
+
+    for (const fp of fabricProcesses) {
+      if (!machineToReceivers[fp.machineNo]) {
+        machineToReceivers[fp.machineNo] = [];
+      }
+      machineToReceivers[fp.machineNo].push(fp.receiverNo);
+    }
+
+    // 2️⃣ Load ALL water records
+    const waters = await Water.find().sort({ updatedAt: -1 });
+
+    const machineReport = [];
+
+    for (const machineNo of Object.keys(machineToReceivers)) {
+      const receivers = machineToReceivers[machineNo];
+
+      let latestWater = null;
+
+      // 3️⃣ Pick latest water among multiple receiver numbers
+      for (const rec of receivers) {
+        const w = waters.find(w => w.receiverNo === rec);
+        if (!w) continue;
+
+        if (!latestWater || new Date(w.updatedAt) > new Date(latestWater.updatedAt)) {
+          latestWater = w;
+        }
+      }
+
+      // 4️⃣ No water yet → Pending
+      if (!latestWater) {
+        machineReport.push({
+          machineNo,
+          receiverNo: null,
+          status: "Pending",
+          operatorName: "-",
+          companyName: "-",
+          fabric: "-",
+          color: "-",
+          weight: "-",
+          dia: "-",
+          date: "-",
+          runningTime: 0,
+          startTimeFormatted: null,
+          endTimeFormatted: null
+        });
+        continue;
+      }
+
+      // 5️⃣ Get customer details
+      const customer = await CustomerDetails.findOne({
+        receiverNo: latestWater.receiverNo
+      });
+
+      machineReport.push({
+        machineNo,
+        receiverNo: latestWater.receiverNo,
+        status: latestWater.status,
+        operatorName: latestWater.operator || latestWater.startedBy || "Unknown",
+        companyName: customer?.companyName || "Unknown",
+        fabric: customer?.fabric || null,
+        color: customer?.color || null,
+        weight: customer?.weight || null,
+        dia: customer?.dia || null,
+        date: latestWater.date
+          ? new Date(latestWater.date).toLocaleDateString("en-IN")
+          : "-",
+        runningTime: latestWater.runningTime ?? 0,
+        startTimeFormatted: latestWater.startTimeFormatted || null,
+        endTimeFormatted: latestWater.endTimeFormatted || null
+      });
+    }
+
+    // 6️⃣ Priority Sorting
+    const priority = { Running: 1, Paused: 2, Freezed: 3, Completed: 4, Pending: 5 };
+
+    machineReport.sort((a, b) => priority[a.status] - priority[b.status]);
+
+    res.status(200).json({
+      success: true,
+      count: machineReport.length,
+      data: machineReport
+    });
+
+  } catch (error) {
+    console.log("MACHINE REPORT ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error"
+    });
   }
 };
