@@ -27,7 +27,7 @@ const fabricProcessSchema = new mongoose.Schema({
   qty: { type: Number, required: true, min: 0 },
   rate: { type: Number, required: true, min: 0 },
   totalCost: { type: Number, min: 0, default: 0 },
-  shiftincharge: { type: String, required: true },
+  shiftincharge: { type: [String], required: true,default: [] },
   waterCost: { type: Number, default: 0 },
   runningTime: { type: Number, default: 0 },      // in minutes
   orderNo: { type: Number, required: true },          // Sequence order
@@ -35,8 +35,8 @@ const fabricProcessSchema = new mongoose.Schema({
   chemicals: { type: [chemicalSchema], default: [] },
   history: { type: [historySchema], default: [] },
   cycle: { type: Number, default: 1 },
-  operator: { type: String, default: "" },
-  status: { type: String, enum: ["Pending","Running","Paused","Completed"], default: "Pending" }
+  operator: { type: [String], default: [] },
+  status: { type: String, enum: ["Pending","Running","Paused","Reprocess","Completed"], default: "Pending" }
 }, { timestamps: true });
 
 export default mongoose.model("listProcess", fabricProcessSchema);
