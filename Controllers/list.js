@@ -2,11 +2,19 @@ import listProcess from "../Models/list.js";
 import CustomerDetails from "../Models/Customer.js";
 import User from "../Models/User.js";
 import Water from "../Models/Water.js";
+import MachineStatus from "../Models/Machinestatus.js";
+
+
+import { sendWhatsApp } from "../Utils/twilio.js";
+import { owners } from "../Config/owners.js";
+
+
+
+
 const getLocalMidnight = (inputDate) => {
   const date = new Date(inputDate);
   date.setHours(0, 0, 0, 0);
-  return date;
-};
+ return new Date(date.getTime() - (date.getTimezoneOffset() * 60000));};
 const toIST = (date) => {
   return new Date(date).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 };
@@ -136,12 +144,16 @@ export const getCompletedFabricProcesses = async (req, res) => {
 ============================================================================ */
 export const reProcessFabricWithWaterCost = async (req, res) => {
   try {
-    const { receiverNo } = req.params;
+    const { id } = req.params;  // <-- Use ID now
     const userName = req.user?.name || "System";
 
-    const previous = await listProcess.findOne({ receiverNo }).sort({ createdAt: -1 });
+    // 1️⃣ Get previous fabric process by ID
+    const previous = await listProcess.findById(id);
     if (!previous)
-      return res.status(404).json({ success: false, message: "Receiver No not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Fabric process not found"
+      });
 
     if (previous.status === "Pending")
       return res.status(400).json({
@@ -149,38 +161,40 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
         message: "Cannot re-process. Process is still Pending."
       });
 
-    const prevWater = await Water.findOne({ receiverNo }).lean();
+    // 2️⃣ Get previous water cost
+    const prevWater = await Water.findOne({ receiverNo: previous.receiverNo }).lean();
     const prevWaterCost = prevWater?.totalWaterCost || 0;
 
-    const newCycle = (previous.cycle || 0) + 1;
-    const newReceiverNo = `RE-${receiverNo}-${newCycle}`;
+    // 3️⃣ Create new cycle receiver number (guaranteed unique)
+    const newCycle = (previous.cycle || 1) + 1;
+    const newReceiverNo = `RE-${previous.receiverNo}-${newCycle}`;
 
-    // Mark previous as Pending
+    // 4️⃣ Mark previous job as PENDING + history
     await listProcess.findByIdAndUpdate(previous._id, {
       status: "Pending",
       $push: {
         history: {
           action: "Re-Process Started",
-          changes: { from: receiverNo, cycle: newCycle },
+          changes: { from: previous.receiverNo, cycle: newCycle, prevWaterCost },
           user: userName
         }
       }
     });
 
-    // Remove from operator task list
+    // 5️⃣ Remove old one from operator task list
     await User.updateOne(
       { name: previous.operator },
       { $pull: { assignedFabrics: { fabricProcess: previous._id } } }
     );
 
-    // Get order
+    // 6️⃣ Maintain order inside operator's queue
     const lastTask = await listProcess
       .findOne({ operator: previous.operator, date: previous.date })
-      .sort({ order: -1 });
+      .sort({ orderNo: -1 });
 
-    const newOrder = lastTask ? lastTask.order + 1 : 1;
+    const newOrderNo = lastTask ? lastTask.orderNo + 1 : 1;
 
-    // Create new process
+    // 7️⃣ Create NEW re-process job
     const newProcess = await listProcess.create({
       receiverNo: newReceiverNo,
       customer: previous.customer,
@@ -188,12 +202,16 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       qty: previous.qty,
       machineNo: previous.machineNo,
       rate: previous.rate,
+
       totalCost: previous.totalCost + prevWaterCost,
-      shiftincharge: previous.shiftIncharge,
+      waterCost: 0,
+      shiftincharge: previous.shiftincharge || previous.shiftIncharge || "Unknown",
+
+      orderNo: newOrderNo,
       operator: previous.operator,
       cycle: newCycle,
       status: "Pending",
-      order: newOrder,
+
       history: [{
         action: "New Cycle Created",
         changes: { newReceiverNo, prevWaterCost },
@@ -201,7 +219,7 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       }]
     });
 
-    // Assign to operator
+    // 8️⃣ Assign new job to operator
     await User.updateOne(
       { name: previous.operator },
       {
@@ -216,19 +234,24 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       }
     );
 
+    // 9️⃣ Populate customer details
     const result = await listProcess.findById(newProcess._id).populate("customer");
 
     return res.status(201).json({
       success: true,
-      message: "Re-processed successfully",
+      message: "Re-process completed successfully",
       data: result
     });
 
   } catch (error) {
-    console.error("Error re-processing:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("Error during Re-Process:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
+
 
 /* ============================================================================
 // PENDING FABRICS (LATEST PER RECEIVER)
@@ -829,6 +852,7 @@ export const getFabricsByMachine = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server Error", error: error.message });
   }
 };
+
 export const getAllMachineReports = async (req, res) => {
   try {
     // 1️⃣ Load all machines from list.js
