@@ -108,7 +108,7 @@ export const startWaterProcess = async (req, res) => {
     // Only start if fabric is in Pending state
     const fabric = await listProcess.findOne({
       receiverNo,
-      status: "Pending"
+      status: { $in: ["Pending", "Reprocess"] }   // <-- Updated
     });
 
     if (!fabric) {
