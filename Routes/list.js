@@ -71,7 +71,7 @@ router.get(
 );
 
 // Reprocess
-router.post(
+router.put(
   "/reprocess/:id",
   protect,
   roleCheck(["admin", "owner", "shiftincharge"]),
