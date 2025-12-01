@@ -43,7 +43,7 @@ const metaSchema = new mongoose.Schema({
 const assignedFabricSchema = new mongoose.Schema({
   fabricProcess: { type: mongoose.Schema.Types.ObjectId, ref: "listProcess" },
   receiverNo: String,
-  status: { type: String, enum: ["Pending", "Completed"], default: "Pending" },
+  status: { type: String, enum: ["Pending", "Completed","Stopped","Reprocess"], default: "Pending" },
   assignedDate: { type: Date, default: Date.now }
 }, { _id: false });
 
