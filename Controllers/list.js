@@ -144,8 +144,8 @@ export const getCompletedFabricProcesses = async (req, res) => {
 ============================================================================ */
 export const reProcessFabricWithWaterCost = async (req, res) => {
   try {
-    const { id } = req.params;  // <-- Use ID now
-        const { date, machineNo, shiftincharge, orderNo } = req.body;  // NEW inputs
+    const { id } = req.params;
+    const { date, machineNo, shiftincharge, orderNo } = req.body;
 
     const userName = req.user?.name || "System";
 
@@ -167,41 +167,43 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
     const prevWater = await Water.findOne({ receiverNo: previous.receiverNo }).lean();
     const prevWaterCost = prevWater?.totalWaterCost || 0;
 
-    // 3️⃣ Create new cycle receiver number (guaranteed unique)
+    // 3️⃣ Calculate new cycle
     const newCycle = (previous.cycle || 1) + 1;
-// Extract BASE receiver number (avoid RE-RE-RE)
-    let baseReceiverNo = previous.receiverNo;
 
-    // If receiver is already reprocess format => extract original
+    // Extract base receiver number (avoid nested RE-RE-RE)
+    let baseReceiverNo = previous.receiverNo;
     if (previous.receiverNo.startsWith("RE-")) {
       const parts = previous.receiverNo.split("-");
-      // Example: RE-R1000-2 => ["RE", "R1000", "2"]
-      baseReceiverNo = parts[1]; }
-    // 4️⃣ Mark previous job as PENDING + history
-      // Build final new receiver number
-    const newReceiverNo = `RE-${baseReceiverNo}-${newCycle}`;
-    const previousCustomer = await CustomerDetails.findOne({ receiverNo: previous.receiverNo });
-if (previousCustomer) {
-  await CustomerDetails.create({
-    ...previousCustomer.toObject(),
-    _id: undefined,          // Let MongoDB generate new ID
-    receiverNo: newReceiverNo,
-  
-  });
-}
+      baseReceiverNo = parts[1];
+    }
 
+    // Build new receiver number
+    const newReceiverNo = `RE-${baseReceiverNo}-${newCycle}`;
+
+    // ⭐ IMPORTANT: Update CustomerDetails receiverNo
+    await CustomerDetails.findOneAndUpdate(
+      { receiverNo: previous.receiverNo },
+      { receiverNo: newReceiverNo }
+    );
+
+    // 4️⃣ Update previous process status + history
     await listProcess.findByIdAndUpdate(previous._id, {
       status: "Reprocess",
       $push: {
         history: {
           action: "Re-Process Started",
-          changes: { from: previous.receiverNo, cycle: newCycle, prevWaterCost, previousOperators: previous.operator || [] },
+          changes: {
+            from: previous.receiverNo,
+            cycle: newCycle,
+            prevWaterCost,
+            previousOperators: previous.operator || []
+          },
           user: userName
         }
       }
     });
-    
- // 5️⃣ Remove previous job from ALL previous operators
+
+    // 5️⃣ Remove previous job from ALL operators
     if (Array.isArray(previous.operator)) {
       for (const opName of previous.operator) {
         await User.updateOne(
@@ -210,41 +212,47 @@ if (previousCustomer) {
         );
       }
     }
-   
 
-    // 6️⃣ Maintain order inside operator's queue
+    // 6️⃣ Determine new order number
     const lastTask = await listProcess
       .findOne({ operator: previous.operator, date: previous.date })
       .sort({ orderNo: -1 });
 
     const newOrderNo = lastTask ? lastTask.orderNo + 1 : 1;
 
-    // 7️⃣ Create NEW re-process job
+    // 7️⃣ Create new Reprocess job
     const newProcess = await listProcess.create({
       receiverNo: newReceiverNo,
       customer: previous.customer,
-      date:date || previous.date,
+      date: date || previous.date,
       qty: previous.qty,
-      machineNo: machineNo ||previous.machineNo,
+      machineNo: machineNo || previous.machineNo,
       rate: previous.rate,
 
       totalCost: previous.totalCost + prevWaterCost,
       waterCost: 0,
-      shiftincharge: shiftincharge ||previous.shiftincharge || [],
+      shiftincharge: shiftincharge || previous.shiftincharge || [],
 
-      orderNo:orderNo || newOrderNo,
+      orderNo: orderNo || newOrderNo,
       operator: previous.operator || [],
       cycle: newCycle,
       status: "Reprocess",
 
-      history: [{
-        action: "New Cycle Created",
-        changes: { newReceiverNo, prevWaterCost,  previousOperators: previous.operator || [],  updatedFields: { date, machineNo, shiftincharge, orderNo } },
-        user: userName
-      }]
+      history: [
+        {
+          action: "New Cycle Created",
+          changes: {
+            newReceiverNo,
+            prevWaterCost,
+            previousOperators: previous.operator || [],
+            updatedFields: { date, machineNo, shiftincharge, orderNo }
+          },
+          user: userName
+        }
+      ]
     });
 
-       // 8️⃣ Assign new job to *ALL* operators
+    // 8️⃣ Assign new job to operators
     if (Array.isArray(previous.operator)) {
       for (const opName of previous.operator) {
         await User.updateOne(
@@ -263,7 +271,7 @@ if (previousCustomer) {
       }
     }
 
-    // 9️⃣ Populate customer details
+    // 9️⃣ Populate Customer details
     const result = await listProcess.findById(newProcess._id).populate("customer");
 
     return res.status(201).json({
@@ -271,7 +279,6 @@ if (previousCustomer) {
       message: "Re-process completed successfully",
       data: result
     });
-
   } catch (error) {
     console.error("Error during Re-Process:", error);
     return res.status(500).json({
