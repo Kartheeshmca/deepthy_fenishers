@@ -45,7 +45,18 @@ export const createFabricProcess = async (req, res) => {
     if (!customer) {
       return res.status(404).json({ success: false, message: "Receiver number not found" });
     }
+ // 🔥 Check receiver assignment duplication
+    const activeProcess = await listProcess.findOne({
+      receiverNo,
+      status: { $ne: "Completed" }
+    });
 
+    if (activeProcess) {
+      return res.status(400).json({
+        success: false,
+        message: `Receiver ${receiverNo} is already assigned to machine ${activeProcess.machineNo} and is not completed yet.`
+      });
+    }
     // -----------------------------------------
     // 🔥 Convert date to UTC midnight (IST logic)
     // -----------------------------------------
@@ -149,7 +160,7 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
 
     const userName = req.user?.name || "System";
 
-    // 1️⃣ Get previous fabric process by ID
+    // 1️⃣ Get previous fabric process
     const previous = await listProcess.findById(id);
     if (!previous)
       return res.status(404).json({
@@ -160,33 +171,60 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
     if (previous.status === "Pending")
       return res.status(400).json({
         success: false,
-        message: "Cannot re-process. Process is still Pending."
+        message: "Cannot re-process. Process is still pending."
       });
 
-    // 2️⃣ Get previous water cost
+    // 2️⃣ Get previous water usage cost
     const prevWater = await Water.findOne({ receiverNo: previous.receiverNo }).lean();
     const prevWaterCost = prevWater?.totalWaterCost || 0;
 
-    // 3️⃣ Calculate new cycle
-    const newCycle = (previous.cycle || 1) + 1;
+    /* =============================================================
+       🔥 Smart Receiver NO + Cycle Logic (✓ No Duplicate Key)
+    ============================================================= */
 
-    // Extract base receiver number (avoid nested RE-RE-RE)
+    // Step 1: Extract base receiver number correctly
     let baseReceiverNo = previous.receiverNo;
-    if (previous.receiverNo.startsWith("RE-")) {
-      const parts = previous.receiverNo.split("-");
-      baseReceiverNo = parts[1];
+
+    // Remove RP- prefix if exists
+    if (baseReceiverNo.startsWith("RP-")) {
+      baseReceiverNo = baseReceiverNo.replace(/^RP-/, "");
     }
 
-    // Build new receiver number
-    const newReceiverNo = `RE-${baseReceiverNo}-${newCycle}`;
+    // If receiver looks like R-1000-2 → convert to R-1000
+    const parts = baseReceiverNo.split("-");
+    if (parts.length > 2) {
+      baseReceiverNo = `${parts[0]}-${parts[1]}`;
+    }
 
-    // ⭐ IMPORTANT: Update CustomerDetails receiverNo
+    // Step 2: Scan database for max cycle
+    const existing = await listProcess
+      .find({ receiverNo: new RegExp(`^RP-${baseReceiverNo}-`) })
+      .select("receiverNo");
+
+    let maxCycle = 1;
+    existing.forEach(item => {
+      const seg = item.receiverNo.split("-");
+      const cycle = parseInt(seg[seg.length - 1], 10);
+      if (!isNaN(cycle) && cycle > maxCycle) maxCycle = cycle;
+    });
+
+    // Step 3: New cycle is max+1
+    const newCycle = maxCycle + 1;
+
+    // Step 4: Build new receiver number safely
+    const newReceiverNo = `RP-${baseReceiverNo}-${newCycle}`;
+
+    /* =============================================================
+        🔁 Update Customer Receiver Mapping
+    ============================================================= */
     await CustomerDetails.findOneAndUpdate(
       { receiverNo: previous.receiverNo },
       { receiverNo: newReceiverNo }
     );
 
-    // 4️⃣ Update previous process status + history
+    /* =============================================================
+        🔁 Update old job status + history
+    ============================================================= */
     await listProcess.findByIdAndUpdate(previous._id, {
       status: "Reprocess",
       $push: {
@@ -194,6 +232,7 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
           action: "Re-Process Started",
           changes: {
             from: previous.receiverNo,
+            newReceiverNo,
             cycle: newCycle,
             prevWaterCost,
             previousOperators: previous.operator || []
@@ -203,24 +242,30 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       }
     });
 
-    // 5️⃣ Remove previous job from ALL operators
+    /* =============================================================
+        ❌ Remove old assignment from operators
+    ============================================================= */
     if (Array.isArray(previous.operator)) {
-      for (const opName of previous.operator) {
+      for (const name of previous.operator) {
         await User.updateOne(
-          { name: opName },
+          { name },
           { $pull: { assignedFabrics: { fabricProcess: previous._id } } }
         );
       }
     }
 
-    // 6️⃣ Determine new order number
+    /* =============================================================
+        🔢 Determine new order number
+    ============================================================= */
     const lastTask = await listProcess
       .findOne({ operator: previous.operator, date: previous.date })
       .sort({ orderNo: -1 });
 
     const newOrderNo = lastTask ? lastTask.orderNo + 1 : 1;
 
-    // 7️⃣ Create new Reprocess job
+    /* =============================================================
+        ✨ Create new reprocess job
+    ============================================================= */
     const newProcess = await listProcess.create({
       receiverNo: newReceiverNo,
       customer: previous.customer,
@@ -252,18 +297,20 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       ]
     });
 
-    // 8️⃣ Assign new job to operators
+    /* =============================================================
+        🔁 Assign new process to operators
+    ============================================================= */
     if (Array.isArray(previous.operator)) {
-      for (const opName of previous.operator) {
+      for (const name of previous.operator) {
         await User.updateOne(
-          { name: opName },
+          { name },
           {
             $push: {
               assignedFabrics: {
                 fabricProcess: newProcess._id,
                 receiverNo: newReceiverNo,
                 status: "Reprocess",
-                assignedDate: previous.date
+                assignedDate: date || previous.date
               }
             }
           }
@@ -271,7 +318,9 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
       }
     }
 
-    // 9️⃣ Populate Customer details
+    /* =============================================================
+        🔁 Return populated response
+    ============================================================= */
     const result = await listProcess.findById(newProcess._id).populate("customer");
 
     return res.status(201).json({
