@@ -1,5 +1,125 @@
 import CustomerDetails from "../Models/Customer.js";
 
+// export const createCustomerDetails = async (req, res) => {
+//   try {
+//     const {
+//       receiverNo,
+//       companyName,
+//       customerName,
+//       fabric,
+//       color,
+//       dia,
+//       roll,
+//       weight,
+//       partyDcNo,
+//       date,
+//     } = req.body;
+
+//     if (!companyName || companyName.trim() === "") {
+//       return res.status(400).json({ message: "Company Name is required" });
+//     }
+
+//     // -----------------------------
+//     // ✔ DATE VALIDATION
+//     // -----------------------------
+//     if (!date) {
+//       return res.status(400).json({ message: "Date is required" });
+//     }
+
+//     let parsedDate;
+
+//     // Format: YYYY-MM-DD
+//     if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+//       parsedDate = new Date(date);
+//     }
+//     // Format: DD/MM/YYYY
+//     else if (/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
+//       const [day, month, year] = date.split("/");
+//       parsedDate = new Date(`${year}-${month}-${day}`);
+//     }
+//     else {
+//       return res.status(400).json({
+//         message: "Invalid date format. Use YYYY-MM-DD or DD/MM/YYYY"
+//       });
+//     }
+
+//     // Invalid date check
+//     if (isNaN(parsedDate.getTime())) {
+//       return res.status(400).json({ message: "Invalid date value" });
+//     }
+
+//     // Future date not allowed
+    
+
+//     // -----------------------------
+//     // Validate unique partyDcNo per company
+//     // -----------------------------
+//     const existingDC = await CustomerDetails.findOne({ companyName, partyDcNo });
+//     if (existingDC) {
+//       return res.status(400).json({
+//         message: `DC No ${partyDcNo} already exists for ${companyName}`
+//       });
+//     }
+
+//     let finalReceiverNo = receiverNo;
+
+//     // Auto-generate receiver no
+//     if (!receiverNo) {
+//       const allCustomers = await CustomerDetails.find({}).lean();
+
+//       if (allCustomers.length > 0) {
+//         const numbers = allCustomers.map(c => {
+//           const parts = c.receiverNo?.split("-");
+//           return parts && parts[1] ? parseInt(parts[1]) : 0;
+//         });
+
+//         const maxNumber = Math.max(...numbers);
+//         finalReceiverNo = `R-${maxNumber + 1}`;
+//       } else {
+//         finalReceiverNo = "R-1000";
+//       }
+//     } else {
+//       // Manual receiver validation
+//       const exists = await CustomerDetails.findOne({ receiverNo });
+//       if (exists) {
+//         return res.status(400).json({ message: "Receiver No already exists" });
+//       }
+//       finalReceiverNo = receiverNo;
+//     }
+
+//     // -----------------------------
+//     // Create Customer
+//     // -----------------------------
+//       const nowIST = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
+//     const newCustomer = await CustomerDetails.create({
+//       receiverNo: finalReceiverNo,
+//       companyName,
+//       customerName,
+//       fabric,
+//       color,
+//       dia,
+//       roll,
+//       weight,
+//       partyDcNo,
+//       date: parsedDate,       // ✔ validated manual date
+//       createdBy: req.user?.id,
+//       createdAt: nowIST,
+//       updatedAt: nowIST,
+//     });
+
+//     return res.status(201).json({
+//       message: "Customer Details Created Successfully",
+//       data: newCustomer,
+//     });
+
+//   } catch (error) {
+//     console.error("Create error:", error);
+//     return res.status(500).json({
+//       message: "Server Error",
+//       error: error.message
+//     });
+//   }
+// };
 export const createCustomerDetails = async (req, res) => {
   try {
     const {
@@ -28,28 +148,22 @@ export const createCustomerDetails = async (req, res) => {
 
     let parsedDate;
 
-    // Format: YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       parsedDate = new Date(date);
-    }
-    // Format: DD/MM/YYYY
+    } 
     else if (/^\d{2}\/\d{2}\/\d{4}$/.test(date)) {
       const [day, month, year] = date.split("/");
       parsedDate = new Date(`${year}-${month}-${day}`);
-    }
+    } 
     else {
       return res.status(400).json({
         message: "Invalid date format. Use YYYY-MM-DD or DD/MM/YYYY"
       });
     }
 
-    // Invalid date check
     if (isNaN(parsedDate.getTime())) {
       return res.status(400).json({ message: "Invalid date value" });
     }
-
-    // Future date not allowed
-    
 
     // -----------------------------
     // Validate unique partyDcNo per company
@@ -63,23 +177,30 @@ export const createCustomerDetails = async (req, res) => {
 
     let finalReceiverNo = receiverNo;
 
-    // Auto-generate receiver no
+    // -----------------------------
+    // AUTO GENERATE RECEIVER NUMBER
+    // -----------------------------
     if (!receiverNo) {
       const allCustomers = await CustomerDetails.find({}).lean();
 
-      if (allCustomers.length > 0) {
-        const numbers = allCustomers.map(c => {
-          const parts = c.receiverNo?.split("-");
-          return parts && parts[1] ? parseInt(parts[1]) : 0;
-        });
+      let maxNumber = 999; // base before first number
 
-        const maxNumber = Math.max(...numbers);
-        finalReceiverNo = `R-${maxNumber + 1}`;
-      } else {
-        finalReceiverNo = "R-1000";
-      }
-    } else {
-      // Manual receiver validation
+      allCustomers.forEach(c => {
+        if (!c.receiverNo) return;
+
+        // Extract R-XXXX even from RP-R-XXXX-2 format
+        const match = c.receiverNo.match(/R-(\d+)/);
+
+        if (match && match[1]) {
+          const num = parseInt(match[1]);
+          if (num > maxNumber) maxNumber = num;
+        }
+      });
+
+      finalReceiverNo = `R-${maxNumber + 1}`;
+    } 
+    else {
+      // Check duplicate if manually entering
       const exists = await CustomerDetails.findOne({ receiverNo });
       if (exists) {
         return res.status(400).json({ message: "Receiver No already exists" });
@@ -88,9 +209,10 @@ export const createCustomerDetails = async (req, res) => {
     }
 
     // -----------------------------
-    // Create Customer
+    // Create Customer Record
     // -----------------------------
-      const nowIST = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
+    const nowIST = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
+
     const newCustomer = await CustomerDetails.create({
       receiverNo: finalReceiverNo,
       companyName,
@@ -101,7 +223,7 @@ export const createCustomerDetails = async (req, res) => {
       roll,
       weight,
       partyDcNo,
-      date: parsedDate,       // ✔ validated manual date
+      date: parsedDate,
       createdBy: req.user?.id,
       createdAt: nowIST,
       updatedAt: nowIST,
