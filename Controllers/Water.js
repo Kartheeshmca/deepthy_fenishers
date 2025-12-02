@@ -480,27 +480,29 @@ export const calculateWaterCost = async (req, res) => {
     if (!water)
       return res.status(404).json({ message: "Water process not found" });
 
-    // 2️⃣ Get Customer Details to calculate water cost
-    const customer = await CustomerDetails.findOne({
-      receiverNo: water.receiverNo
-    });
+    console.log("Water ReceiverNo:", water.receiverNo);
 
-    if (!customer)
+    // 2️⃣ Get Customer Details to calculate water cost
+    // Trim and convert to string to avoid mismatch
+    const receiverNo = String(water.receiverNo).trim();
+
+    const customer = await CustomerDetails.findOne({ receiverNo });
+
+    if (!customer) {
+      console.warn(`Customer not found for receiverNo: ${receiverNo}`);
       return res
         .status(404)
-        .json({ message: "Customer details not found" });
+        .json({ message: `Customer details not found for receiverNo: ${receiverNo}` });
+    }
 
+    // 3️⃣ Calculate water cost
     const weight = customer.weight || 1;
-    const units =
-      (water.closingReading || 0) - (water.openingReading || 0);
+    const units = (water.closingReading || 0) - (water.openingReading || 0);
 
-    // 3️⃣ Calculate cost
     let cost = Number(((units / weight) * 0.4).toFixed(2));
     if (isNaN(cost) || cost < 0) cost = 0;
 
     water.totalWaterCost = cost;
-
-    // 🔥 4️⃣ MARK WATER AS COMPLETED
     water.status = "Completed";
 
     // Save history for water
@@ -510,47 +512,46 @@ export const calculateWaterCost = async (req, res) => {
       {
         closingReading: water.closingReading,
         unitsUsed: units,
-        totalWaterCost: cost
+        totalWaterCost: cost,
       },
       userName
     );
 
     await water.save();
 
-    // 5️⃣ FIND FABRIC PROCESS AND MARK COMPLETED
-    const fabric = await listProcess.findOne({
-      receiverNo: water.receiverNo
-    });
+    // 4️⃣ Update Fabric Process linked to this water
+    const fabric = await listProcess.findOne({ receiverNo });
 
-   if (fabric) {
-  fabric.status = "Completed";
-  fabric.operator = water.operator;
+    if (fabric) {
+      fabric.status = "Completed";
+      fabric.operator = water.operator;
+      fabric.waterCost = cost;
+      fabric.runningTime = water.runningTime || 0;
+      fabric.history.push({
+        action: "Fabric Completed",
+        changes: { waterCost: cost, runningTime: fabric.runningTime },
+        user: userName,
+        date: new Date(),
+      });
 
-  fabric.waterCost = cost; // ⭐ store for getAlllistProcesses()
-  fabric.runningTime= water.runningTime
-  fabric.history.push({
-    action: "Fabric Completed",
-    changes: { waterCost: cost , runningTime: water.runningTime},
-    user: userName,
-    date: new Date()
-  });
+      await fabric.save();
+    }
 
-  await fabric.save();
-}
-  notifyOwners(water, customer, "Completed");
+    // 5️⃣ Notify owners
+    notifyOwners(water, customer, "Completed");
 
     return res.status(200).json({
       message: "Water & Fabric marked as Completed",
       water,
       fabric,
-      runningTime: (water.runningTime || 0).toFixed(2) + " minutes"
+      runningTime: (water.runningTime || 0).toFixed(2) + " minutes",
     });
-
   } catch (error) {
     console.error("COST ERROR:", error);
     return res.status(500).json({
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
+
