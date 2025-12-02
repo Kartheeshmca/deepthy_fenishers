@@ -13,7 +13,8 @@ import {
   getFabricReportByReceiver,
   addDyesAndChemicalsByReceiver,
   getFabricsByMachine,
-  getAllMachineReports
+  getAllMachineReports,
+  getOperatorDashboard
 } from "../Controllers/list.js";
 
 import { protect, roleCheck } from "../Middleware/Auth.js";
@@ -115,7 +116,12 @@ router.post(
   roleCheck(["admin", "owner"]),
   addDyesAndChemicalsByReceiver
 );
-
+router.get(
+  "/alloperator",
+  protect,
+  roleCheck(["admin", "owner"]),
+  getOperatorDashboard
+);
 // Update
 router.put(
   "/update/:id",
