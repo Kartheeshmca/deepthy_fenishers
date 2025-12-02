@@ -1036,3 +1036,57 @@ export const getAllMachineReports = async (req, res) => {
     });
   }
 };
+const getDayRange = (inputDate) => {
+  const date = inputDate ? new Date(inputDate) : new Date();
+  date.setHours(0, 0, 0, 0);
+  const start = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  const end = new Date(start);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+export const getOperatorDashboard = async (req, res) => {
+  try {
+    const { date } = req.query; // optional date filter
+    const { start, end } = getDayRange(date);
+
+    // Fetch all work for all operators
+    const work = await listProcess.find({
+      status: { $in: ["Running", "Paused", "Stopped", "Reprocess", "Completed"] },
+      date: { $gte: start, $lte: end }
+    }).sort({ date: -1 });
+
+    if (!work || work.length === 0) {
+      return res.status(200).json({ message: "No work found for this date", data: [] });
+    }
+
+    const data = await Promise.all(work.map(async (item) => {
+      const water = await Water.findOne({ receiverNo: item.receiverNo }).sort({ createdAt: -1 });
+      const customer = await CustomerDetails.findOne({ receiverNo: item.receiverNo });
+
+      return {
+        operator: item.operator,                  // get operator(s) from listProcess
+        machineNo: item.machineNo,
+        receiverNo: item.receiverNo,
+        runningTime: item.runningTime || 0,
+        status: item.status,
+        startTimeFormatted: water?.startTimeFormatted || "-",
+        endTimeFormatted: water?.endTimeFormatted || "-",
+        customer: {
+          companyName: customer?.companyName || "Unknown",
+          color: customer?.color || "-",
+          weight: customer?.weight || "-"
+        }
+      };
+    }));
+
+    return res.status(200).json({
+      message: "Operator dashboard fetched successfully",
+      data
+    });
+
+  } catch (error) {
+    console.error("OPERATOR DASHBOARD ERROR:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
