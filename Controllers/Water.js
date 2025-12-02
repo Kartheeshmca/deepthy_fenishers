@@ -360,7 +360,7 @@ const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo })
 export const stopWaterProcess = async (req, res) => {
   try {
     const { id } = req.params; // <-- get water process ID from URL
-    const { closingReading } = req.body;
+    // const { closingReading } = req.body;
     const userName = req.user?.name || "System";
 
     // Find water process by ID (must be Running or Paused)
@@ -383,12 +383,12 @@ export const stopWaterProcess = async (req, res) => {
     water.status = "Stopped"; // or "Completed" if you prefer
     water.endTime = now;
     water.endTimeFormatted = formatTime(now);
-    water.closingReading = closingReading;
+    // water.closingReading = closingReading;
 
     addWaterHistory(
       water,
       "Stopped",
-      { closingReading, runningTime: water.runningTime },
+      {  runningTime: water.runningTime },
       userName
     );
 
