@@ -1,560 +1,1139 @@
-import Water from "../Models/Water.js";
 import listProcess from "../Models/list.js";
 import CustomerDetails from "../Models/Customer.js";
-
-import { sendWhatsApp } from "../Utils/twilio.js";
-import { owners } from "../Config/owners.js";
-/* -----------------------------------------------------
-   Helper: Add History Entry
------------------------------------------------------ */
-const addWaterHistory = (water, action, changes = {}, user = "System") => {
-  if (!water.history) water.history = [];
-  water.history.push({
-    action,
-    changes,
-    user,
-    date: new Date()
-  });
-};
-
-// Convert any date to 00:00 India local date
+import User from "../Models/User.js";
+import Water from "../Models/Water.js";
 
 
-// Convert timestamp to India format
+
+
+const getLocalMidnight = (inputDate) => {
+  const date = new Date(inputDate);
+  date.setHours(0, 0, 0, 0);
+ return new Date(date.getTime() - (date.getTimezoneOffset() * 60000));};
 const toIST = (date) => {
   return new Date(date).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 };
-
-const formatTime = (date) => {
-  return new Date(date)
-    .toLocaleTimeString("en-IN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-      timeZone: "Asia/Kolkata"
-    });
-};
-
-const notifyOwners = async (water, customer, action) => {
-  const actionConfig = {
-    "Running": { emoji: "🟢" },
-    "Paused": { emoji: "🟡" },
-    "Resumed": { emoji: "🔵" },
-    "Stopped": { emoji: "🔴" },
-    "Completed": { emoji: "✅" }
-  };
-
-  const config = actionConfig[action] || { emoji: "⚪" };
-
-  let message = `
- *MACHINE STATUS* 
-${config.emoji} *${action}* ${config.emoji}
-
-📊 *MACHINE INFORMATION*
-┌────────────────────────────
-│  Machine-No: ${water.receiverNo}
-│  Status: ${action}
-│  Operator: ${water.operator || "Unknown"}
-└────────────────────────────
-  `;
-  /* TIME FOR RUNNING / PAUSED / RESUMED */
-  if (["Running", "Paused", "Resumed"].includes(action)) {
-    message += `
-⏰ *TIMING*
-┌────────────────────────────
-│  Machine Started: ${water.startTimeFormatted || "-"}
-└────────────────────────────
-    `;
-  }
-  /* TIME FOR STOPPED / COMPLETED */
-  if (["Stopped", "Completed"].includes(action)) {
-    message += `
-⏰ *TIMING*
-┌────────────────────────────
-│  Start Time : ${water.startTimeFormatted || "-"}
-│  End Time   : ${water.endTimeFormatted || "-"}
-└────────────────────────────
-    `;
-  }
-  /* CUSTOMER DETAILS */
-  message += `
-👥 *CUSTOMER DETAILS*
-┌────────────────────────────
-│  Company : ${customer?.companyName || "Unknown"}
-│  Color   : ${customer?.color || "-"}
-│  Weight  : ${customer?.weight || "-"} KG
-└────────────────────────────
-  `;
-  if (water.remarks) {
-    message += `
-📝 REMARKS : ${water.remarks}
-
-    `;
-  }
-    message += `
-⏳ *TOTAL RUNNING TIME*
-  ━━━━━━━━━━━━━━━━━━━━━━
-    *${water.runningTime ?? 0} minutes*
-  ━━━━━━━━━━━━━━━━━━━━━━
-    `;
-  /* REMARKS */
-  
-  if (["Completed"].includes(action)) {
-    message += `
-💧 *WATER COST*
-  ━━━━━━━━━━━━━━━━━━━━━━
-   💰 *₹ ${water.totalWaterCost || 0}*
-  ━━━━━━━━━━━━━━━━━━━━━━
-    `;
-  }
-
-  owners.forEach(number => sendWhatsApp(number, message));
-};
-
-// Helper: Send Notification
-export const startWaterProcess = async (req, res) => {
+export const createFabricProcess = async (req, res) => {
   try {
-    const { receiverNo, openingReading } = req.body;
-    const userName = req.user?.name || "System";
+    const allowedRoles = ["owner", "admin", "shiftincharge"];
 
-    if (!receiverNo) {
-      return res.status(400).json({ message: "receiverNo is required" });
-    }
-
-    // Only start if fabric is in Pending state
-    const fabric = await listProcess.findOne({
-      receiverNo,
-      status: { $in: ["Pending", "Reprocess"] }   // <-- Updated
-    });
-
-    if (!fabric) {
-      return res.status(404).json({
-        message: "No pending task found for this receiverNo"
+    if (!allowedRoles.includes(req.user?.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only Owner/Admin/ShiftIncharge can create process"
       });
     }
-    const now = new Date();
-    // Create Water Process
-    const water = await Water.create({
+
+    const { receiverNo, qty, machineNo, rate, shiftincharge, orderNo, date } = req.body;
+
+    if (!receiverNo || !machineNo || !date) {
+      return res.status(400).json({ success: false, message: "Required fields missing" });
+    }
+
+    if (!orderNo || orderNo < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Order number must be greater than 0"
+      });
+    }
+    const customer = await CustomerDetails.findOne({ receiverNo });
+    if (!customer) {
+      return res.status(404).json({ success: false, message: "Receiver number not found" });
+    }
+ // 🔥 Check receiver assignment duplication
+    const activeProcess = await listProcess.findOne({
       receiverNo,
-      openingReading,
-      startTime: new Date(),
-      startTimeFormatted: formatTime(toIST(now)),    
-      status: "Running",
-      runningTime: 0,
-      startedBy: userName,
-      operator: userName,
-      machineNo:fabric.machineNo,
-         // Store Operator Here
+      status: { $ne: "Completed" }
+    });
+
+    if (activeProcess) {
+      return res.status(400).json({
+        success: false,
+        message: `Receiver ${receiverNo} is already assigned to machine ${activeProcess.machineNo} and is not completed yet.`
+      });
+    }
+    // -----------------------------------------
+    // 🔥 Convert date to UTC midnight (IST logic)
+    // -----------------------------------------
+    const formattedDate = getLocalMidnight(date);
+
+    // ------------------------------------------------------
+    // 🔥 Check orderNo unique for same Machine + Same Date
+    // ------------------------------------------------------
+    const existingOrder = await listProcess.findOne({
+      machineNo,
+      orderNo,
+      date: formattedDate   // same date only
+    });
+
+    if (existingOrder) {
+      return res.status(400).json({
+        success: false,
+        message: `Order number ${orderNo} already exists for Machine ${machineNo} on this date`
+      });
+    }
+
+    const totalCost = qty * rate;
+
+    const processData = {
+      receiverNo,
+      customer: customer._id,
+      qty,
+      rate,
+      totalCost,
+      machineNo,
+      shiftincharge,
+      orderNo,
+      createdBy: req.user._id,
+      date: formattedDate,
+    };
+
+    const processEntry = await listProcess.create(processData);
+
+    const responseEntry = {
+      ...processEntry.toObject(),
+      date: toIST(processEntry.date),
+      createdAt: toIST(processEntry.createdAt),
+      updatedAt: toIST(processEntry.updatedAt)
+    };
+
+    return res.status(201).json({
+      success: true,
+      message: "Fabric process created successfully",
+      data: responseEntry
+    });
+
+  } catch (error) {
+    console.error("Error creating fabric process:", error);
+    return res.status(500).json({ success: false, message: "Server Error", error: error.message });
+  }
+};
+/* ============================================================================
+// GET COMPLETED FABRIC PROCESSES WITH WATER COST
+============================================================================ */
+export const getCompletedFabricProcesses = async (req, res) => {
+  try {
+    const fabrics = await listProcess
+      .find({ status: "Completed" })
+      .populate("customer")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const result = [];
+
+    for (const fabric of fabrics) {
+      const waterEntry = await Water.findOne({ receiverNo: fabric.receiverNo }).lean();
+      const waterCost = waterEntry?.totalWaterCost || 0;
+
+      result.push({
+        ...fabric,
+        waterCost,
+        totalCostWithWater: fabric.totalCost + waterCost,
+        waterProcess: waterEntry || null
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result
+    });
+
+  } catch (error) {
+    console.error("Error fetching completed fabrics:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================================
+// RE-PROCESS FABRIC WITH WATER COST
+============================================================================ */
+export const reProcessFabricWithWaterCost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { date, machineNo, shiftincharge, orderNo } = req.body;
+
+    const userName = req.user?.name || "System";
+
+    // 1️⃣ Get previous fabric process
+    const previous = await listProcess.findById(id);
+    if (!previous)
+      return res.status(404).json({
+        success: false,
+        message: "Fabric process not found"
+      });
+
+    if (previous.status === "Pending")
+      return res.status(400).json({
+        success: false,
+        message: "Cannot re-process. Process is still pending."
+      });
+
+    // 2️⃣ Get previous water usage cost
+    const prevWater = await Water.findOne({ receiverNo: previous.receiverNo }).lean();
+    const prevWaterCost = prevWater?.totalWaterCost || 0;
+
+    /* =============================================================
+       🔥 Smart Receiver NO + Cycle Logic (✓ No Duplicate Key)
+    ============================================================= */
+
+    // Step 1: Extract base receiver number correctly
+    let baseReceiverNo = previous.receiverNo;
+
+    // Remove RP- prefix if exists
+    if (baseReceiverNo.startsWith("RP-")) {
+      baseReceiverNo = baseReceiverNo.replace(/^RP-/, "");
+    }
+
+    // If receiver looks like R-1000-2 → convert to R-1000
+    const parts = baseReceiverNo.split("-");
+    if (parts.length > 2) {
+      baseReceiverNo = `${parts[0]}-${parts[1]}`;
+    }
+
+    // Step 2: Scan database for max cycle
+    const existing = await listProcess
+      .find({ receiverNo: new RegExp(`^RP-${baseReceiverNo}-`) })
+      .select("receiverNo");
+
+    let maxCycle = 1;
+    existing.forEach(item => {
+      const seg = item.receiverNo.split("-");
+      const cycle = parseInt(seg[seg.length - 1], 10);
+      if (!isNaN(cycle) && cycle > maxCycle) maxCycle = cycle;
+    });
+
+    // Step 3: New cycle is max+1
+    const newCycle = maxCycle + 1;
+
+    // Step 4: Build new receiver number safely
+    const newReceiverNo = `RP-${baseReceiverNo}-${newCycle}`;
+
+    /* =============================================================
+        🔁 Update Customer Receiver Mapping
+    ============================================================= */
+    await CustomerDetails.findOneAndUpdate(
+      { receiverNo: previous.receiverNo },
+      { receiverNo: newReceiverNo }
+    );
+
+    /* =============================================================
+        🔁 Update old job status + history
+    ============================================================= */
+    await listProcess.findByIdAndUpdate(previous._id, {
+      status: "Re-Completed",
+      $push: {
+        history: {
+          action: "Re-Process Started",
+          changes: {
+            from: previous.receiverNo,
+            newReceiverNo,
+            cycle: newCycle,
+            prevWaterCost,
+            previousOperators: previous.operator || []
+          },
+          user: userName
+        }
+      }
+    });
+
+    /* =============================================================
+        ❌ Remove old assignment from operators
+    ============================================================= */
+    if (Array.isArray(previous.operator)) {
+      for (const name of previous.operator) {
+        await User.updateOne(
+          { name },
+          { $pull: { assignedFabrics: { fabricProcess: previous._id } } }
+        );
+      }
+    }
+
+    /* =============================================================
+        🔢 Determine new order number
+    ============================================================= */
+    const lastTask = await listProcess
+      .findOne({ operator: previous.operator, date: previous.date })
+      .sort({ orderNo: -1 });
+
+    const newOrderNo = lastTask ? lastTask.orderNo + 1 : 1;
+
+    /* =============================================================
+        ✨ Create new reprocess job
+    ============================================================= */
+    const newProcess = await listProcess.create({
+      receiverNo: newReceiverNo,
+      customer: previous.customer,
+      date: date || previous.date,
+      qty: previous.qty,
+      machineNo: machineNo || previous.machineNo,
+      rate: previous.rate,
+
+      totalCost: previous.totalCost + prevWaterCost,
+      waterCost: 0,
+      shiftincharge: shiftincharge || previous.shiftincharge || [],
+
+      orderNo: orderNo || newOrderNo,
+      operator: previous.operator || [],
+      cycle: newCycle,
+      status: "Reprocess",
 
       history: [
         {
-          action: "Process Started",
-          changes: { openingReading },
-          user: userName,
-          date: new Date()
+          action: "New Cycle Created",
+          changes: {
+            newReceiverNo,
+            prevWaterCost,
+            previousOperators: previous.operator || [],
+            updatedFields: { date, machineNo, shiftincharge, orderNo }
+          },
+          user: userName
         }
       ]
     });
 
-    // Update Fabric Process
-    const updatedFabric = await listProcess.findByIdAndUpdate(
-      fabric._id,
-      {
-        status: "Running",
-        operator: userName
-      },
-      { new: true }
-    );
-   
-const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
-    notifyOwners(water, customer, "Running");
+    /* =============================================================
+        🔁 Assign new process to operators
+    ============================================================= */
+    if (Array.isArray(previous.operator)) {
+      for (const name of previous.operator) {
+        await User.updateOne(
+          { name },
+          {
+            $push: {
+              assignedFabrics: {
+                fabricProcess: newProcess._id,
+                receiverNo: newReceiverNo,
+                status: "Reprocess",
+                assignedDate: date || previous.date
+              }
+            }
+          }
+        );
+      }
+    }
 
-  
+    /* =============================================================
+        🔁 Return populated response
+    ============================================================= */
+    const result = await listProcess.findById(newProcess._id).populate("customer");
+
     return res.status(201).json({
-      message: "Water process started successfully",
-      water,
-      fabric: updatedFabric
-
+      success: true,
+      message: "Re-process completed successfully",
+      data: result
     });
-
   } catch (error) {
-    console.error("START ERROR:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error during Re-Process:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
 
-/* =====================================================
-   PAUSE WATER PROCESS
-===================================================== */
-// export const pauseWaterProcess = async (req, res) => {
-//   try {
-//     const { id } = req.params; // <-- use ID from URL
-//     const { remarks } = req.body;
-//     const userName = req.user?.name || "System";
 
-//     // Find water process by ID
-//     const water = await Water.findById(id);
-//     if (!water) return res.status(404).json({ message: "Water record not found" });
-
-//     /* -----------------------------------------------------
-//        CASE 1: PROCESS IS RUNNING → PAUSE IT
-//     ----------------------------------------------------- */
-//     if (water.status === "Running") {
-//       const now = new Date();
-
-//       // Add running time until now
-//       if (water.startTime) {
-//         water.runningTime += (now - new Date(water.startTime)) / 60000;
-//         water.runningTime = Number(water.runningTime.toFixed(2));
-//       }
-
-//       // Update to Paused
-//       water.status = "Paused";
-//       water.startTime = null;
-//       water.remarks = remarks;
-
-//       addWaterHistory(
-//         water,
-//         "Paused",
-//         { runningTime: water.runningTime, remarks },
-//         userName
-//       );
-
-//       await water.save();
-
-//       // Optionally, update related listProcess by receiverNo
-//       if (water.receiverNo) {
-//         await listProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Paused" });
-//       }
-
-//       return res.status(200).json({
-//         message: "Water process paused",
-//         water
-//       });
-//     }
-
-//     /* -----------------------------------------------------
-//        CASE 2: PROCESS IS PAUSED → RESUME IT
-//     ----------------------------------------------------- */
-//     if (water.status === "Paused") {
-//       water.startTime = new Date();
-//       water.status = "Running";
-//       water.remarks = remarks;
-
-//       addWaterHistory(
-//         water,
-//         "Resumed",
-//         { remarks },
-//         userName
-//       );
-
-//       await water.save();
-
-//       // Optionally, update related listProcess by receiverNo
-//       if (water.receiverNo) {
-//         await listProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Running" , runningtime: water.runningTime });
-//       }
-
-//       return res.status(200).json({
-//         message: "Water process resumed",
-//         water
-//       });
-//     }
-
-//     /* -----------------------------------------------------
-//        IF OTHER STATUS
-//     ----------------------------------------------------- */
-//     return res.status(400).json({
-//       message: `Cannot toggle when status is ${water.status}`
-//     });
-
-//   } catch (error) {
-//     console.error("TOGGLE ERROR:", error);
-//     return res.status(500).json({ message: "Server error", error: error.message });
-//   }
-// };
-export const pauseWaterProcess = async (req, res) => {
+/* ============================================================================
+// PENDING FABRICS (LATEST PER RECEIVER)
+============================================================================ */
+export const getPendingFabricProcesses = async (req, res) => {
   try {
-    const { id } = req.params; 
-    const { remarks } = req.body;
-    const userName = req.user?.name || "System";
+    const { machineNo, receiverNo } = req.query;
 
-    let water = await Water.findById(id);
-    if (!water)
-      return res.status(404).json({ message: "Water record not found" });
+    let matchFilter = { status: { $in: ["Pending", "Reprocess"] } };
 
-    const now = new Date();
+    if (machineNo) matchFilter.machineNo = new RegExp(machineNo, "i");
+    if (receiverNo) matchFilter.receiverNo = new RegExp(receiverNo, "i");
 
-    /* -----------------------------------------------------
-       CASE 1: RUNNING → PAUSE
-    ----------------------------------------------------- */
-    if (water.status === "Running") {
+    const list = await listProcess.aggregate([
+      { $match: matchFilter },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$receiverNo",
+          latestEntry: { $first: "$$ROOT" },
+        },
+      },
+      { $replaceRoot: { newRoot: "$latestEntry" } },
+      {
+        $lookup: {
+          from: "customerdetails",
+          localField: "customer",
+          foreignField: "_id",
+          as: "customer"
+        }
+      },
+      { $unwind: "$customer" },
+      { $sort: { machineNo: -1, receiverNo: -1 } }
+    ]);
 
-      // Calculate running time up to this pause moment
-      if (water.startTime) {
-        const minutes = (now - new Date(water.startTime)) / 60000;
-        water.runningTime = Number((water.runningTime + minutes).toFixed(2));
-      }
-
-      // Pause the process
-      water.status = "Paused";
-      water.startTime = null;               // Freeze timer
-      water.remarks = remarks;
-
-      addWaterHistory(
-        water,
-        "Paused",
-        { runningTime: water.runningTime, remarks },
-        userName
-      );
-
-      await water.save();
-
-      // Update related listProcess
-      if (water.receiverNo) {
-        await listProcess.updateOne(
-          { receiverNo: water.receiverNo },
-          { status: "Paused", runningTime: water.runningTime }
-        );
-      }
-const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
-
-       notifyOwners(water, customer, "Paused");
-      return res.status(200).json({
-        message: "Water process paused",
-        runningTime: water.runningTime,   // <-- RETURNED ALWAYS
-        water
-      });
-    }
-
-    /* -----------------------------------------------------
-       CASE 2: PAUSED → RESUME
-    ----------------------------------------------------- */
-    if (water.status === "Paused") {
-
-      // Resume timer (do NOT reset runningTime)
-      water.status = "Running";
-      water.startTime = new Date();        // Start counting from now
-      water.remarks = remarks;
-
-      addWaterHistory(
-        water,
-        "Resumed",
-        { remarks },
-        userName
-      );
-
-      await water.save();
-
-      // Update fabric process
-      if (water.receiverNo) {
-        await listProcess.updateOne(
-          { receiverNo: water.receiverNo },
-          { status: "Running", runningTime: water.runningTime }
-        );
-      }
-      const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
-
-  notifyOwners(water, customer, "Resumed");
-      return res.status(200).json({
-        message: "Water process resumed",
-        runningTime: water.runningTime,    // <-- STILL RETURNED
-        water
-      });
-    }
-    
-    return res.status(400).json({
-      message: `Cannot toggle when status is ${water.status}`
-    });
-
-  } catch (error) {
-    console.error("TOGGLE ERROR:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
-  }
-};
-
-/* =====================================================
-   STOP WATER PROCESS
-===================================================== */
-export const stopWaterProcess = async (req, res) => {
-  try {
-    const { id } = req.params; // <-- get water process ID from URL
-    // const { closingReading } = req.body;
-    const userName = req.user?.name || "System";
-
-    // Find water process by ID (must be Running or Paused)
-    const water = await Water.findOne({
-      _id: id,
-      status: { $in: ["Running", "Paused"] }
-    });
-
-    if (!water) return res.status(404).json({ message: "Water record not found" });
-
-    const now = new Date();
-
-    // Update running time if process was running
-    if (water.startTime) {
-      water.runningTime += (now - new Date(water.startTime)) / 60000;
-      water.runningTime = Number(water.runningTime.toFixed(2));
-    }
-
-    // Stop the process
-    water.status = "Stopped"; // or "Completed" if you prefer
-    water.endTime = now;
-    water.endTimeFormatted = formatTime(toIST(now));
-    // water.closingReading = closingReading;
-
-    addWaterHistory(
-      water,
-      "Stopped",
-      {  runningTime: water.runningTime },
-      userName
-    );
-
-    await water.save();
-
-    // Optionally, update related listProcess by receiverNo
-    if (water.receiverNo) {
-      await listProcess.updateOne(
-        { receiverNo: water.receiverNo },
-        { status: "Stopped",
-          runningTime: water.runningTime 
-         }
-      );
-    }const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
-
-  notifyOwners(water, customer, "Stopped");
     return res.status(200).json({
-      message: "Water process stopped successfully",
-      water
+      success: true,
+      count: list.length,
+      data: list
     });
 
   } catch (error) {
-    console.error("STOP ERROR:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error fetching pending list:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
+/* ============================================================================
+// OPERATOR ASSIGNED FABRICS (TODAY)
+============================================================================ */
+export const getOperatorAssignedFabrics = async (req, res) => {
+  try {
+    let operatorName = req.query.operator || req.user?.name || null;
+    const selectedDate = req.query.date ? new Date(req.query.date) : new Date();
+    selectedDate.setHours(0, 0, 0, 0);
 
-/* =====================================================
-   CALCULATE WATER COST
-===================================================== */
-// export const calculateWaterCost = async (req, res) => {
-//   try {
-//     const { id } = req.body;
-//     const userName = req.user?.name || "Unknown";
+    let assignedData = [];
 
-//     const water = await Water.findById(id);
-//     if (!water)
-//       return res.status(404).json({ message: "Water process not found" });
+    if (operatorName && operatorName.trim() !== "") {
+      const operator = await User.findOne({ name: new RegExp(`^${operatorName}$`, "i") }).lean();
+      if (!operator)
+        return res.status(404).json({ success: false, message: "Operator not found" });
 
-//     const customer = await CustomerDetails.findOne({
-//       receiverNo: water.receiverNo
-//     });
+      assignedData = operator.assignedFabrics.filter(a => {
+        const assigned = new Date(a.assignedDate);
+        assigned.setHours(0, 0, 0, 0);
+        return a.status === "Pending" && assigned.getTime() === selectedDate.getTime();
+      });
+    } else {
+      const allOperators = await User.find({ role: "operator" }).lean();
+      for (const op of allOperators) {
+        const pendingForDate = op.assignedFabrics.filter(a => {
+          const assigned = new Date(a.assignedDate);
+          assigned.setHours(0, 0, 0, 0);
+          return a.status === "Pending" && assigned.getTime() === selectedDate.getTime();
+        });
+        assignedData.push(...pendingForDate);
+      }
+    }
 
-//     if (!customer)
-//       return res.status(404).json({ message: "Customer details not found" });
+    if (!assignedData.length) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: [],
+        message: "No pending tasks for selected date"
+      });
+    }
 
-//     const weight = customer.weight || 1;
-//     const units =
-//       (water.closingReading || 0) - (water.openingReading || 0);
+    const ids = assignedData.map(a => a.fabricProcess);
 
-//     let cost = Number(((units / weight) * 0.4).toFixed(2));
-//     if (isNaN(cost) || cost < 0) cost = 0;
+    let fabrics = await listProcess.find({ _id: { $in: ids }, status: "Pending" })
+      .populate("customer")
+      .lean();
 
-//     water.totalWaterCost = cost;
+    fabrics.sort((a, b) => a.order - b.order);
 
-//     water.status = "Completed";
+    let first = false;
+    fabrics = fabrics.map(f => {
+      if (!first && f.status === "Pending") {
+        first = true;
+        f.canStart = true;
+      } else {
+        f.canStart = false;
+      }
+      return {
+        ...f,
+        date: toIST(f.date),
+        createdAt: toIST(f.createdAt),
+        updatedAt: toIST(f.updatedAt)
+      };
+    });
 
-//     addWaterHistory(
-//       water,
-//       "Completed",
-//       { totalWaterCost: water.totalWaterCost },
-//       userName
-//     );
+    return res.status(200).json({
+      success: true,
+      count: fabrics.length,
+      data: fabrics
+    });
 
-//     await water.save();
+  } catch (error) {
+    console.error("Error fetching operator fabrics:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
-//     return res.status(200).json({
-//       message: "Water cost calculated & process marked as Completed",
-//       water,
-//       runningTime: water.runningTime.toFixed(2) + " minutes"
-//     });
-
-//   } catch (error) {
-//     console.error("COST ERROR:", error);
-//     return res.status(500).json({
-//       message: "Server error",
-//       error: error.message
-//     });
-//   }
-// };
-export const calculateWaterCost = async (req, res) => {
+export const updateFabricProcess = async (req, res) => {
   try {
     const { id } = req.params;
-    const { closingReading } = req.body;
-    const userName = req.user?.name || "Unknown";
+    const updates = req.body;
 
-    const water = await Water.findById(id);
-    if (!water) return res.status(404).json({ message: "Water process not found" });
-
-    // Persist closingReading if provided
-    if (closingReading !== undefined && closingReading !== null && closingReading !== "") {
-      water.closingReading = Number(closingReading);
-    }
-
-    // Validate readings
-    if (water.openingReading === undefined || water.openingReading === null || water.closingReading === undefined || water.closingReading === null) {
-      return res.status(400).json({ message: "Opening and closing readings are required to calculate water cost" });
-    }
-
-    const receiverNo = String(water.receiverNo).trim();
-    const customer = await CustomerDetails.findOne({ receiverNo });
-
-    if (!customer) {
-      return res.status(404).json({ message: `Customer details not found for receiverNo: ${receiverNo}` });
-    }
-
-    // Units and cost using selected formula
-    const units = Number(water.closingReading) - Number(water.openingReading);
-
-    const weight = Number(customer.weight || 1);
-    let cost = Number(((units / (weight || 1)) * 0.4).toFixed(2));
-    if (isNaN(cost) || cost < 0) cost = 0;
-
-    water.totalWaterCost = cost;
-    water.status = "Completed";
-
-    addWaterHistory(water, "Water Process Completed", { closingReading: water.closingReading, unitsUsed: units, totalWaterCost: cost }, userName);
-    await water.save();
-
-    // Update fabric process
-    const fabric = await listProcess.findOne({ receiverNo });
-    if (fabric) {
-      fabric.status = "Completed";
-      fabric.operator = water.operator;
-      fabric.waterCost = cost;
-      fabric.runningTime = water.runningTime || 0;
-      fabric.history = fabric.history || [];
-      fabric.history.push({
-        action: "Fabric Completed",
-        changes: { waterCost: cost, runningTime: fabric.runningTime },
-        user: userName,
-        date: new Date()
+    const fabric = await listProcess.findById(id);
+    if (!fabric) {
+      return res.status(404).json({
+        success: false,
+        message: "Process not found for this ID"
       });
-      await fabric.save();
     }
 
-    notifyOwners(water, customer, "Completed");
+    const newOrderNo = updates.orderNo ?? fabric.orderNo;
+    const newMachine = updates.machineNo ?? fabric.machineNo;
+    const newDate = updates.date ? getLocalMidnight(updates.date) : fabric.date;
+
+    // ---------------------------------------------------------
+    // ❌ ORDER NO MUST NOT BE ZERO
+    // ---------------------------------------------------------
+    if (!newOrderNo || newOrderNo < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Order number must be greater than 0"
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 🔥 CHECK UNIQUE ORDER NO FOR SAME MACHINE + SAME DATE
+    // ---------------------------------------------------------
+    const existingOrder = await listProcess.findOne({
+      _id: { $ne: id },
+      machineNo: newMachine,
+      date: newDate,
+      orderNo: newOrderNo
+    });
+
+    if (existingOrder) {
+      return res.status(400).json({
+        success: false,
+        message: `OrderNo ${newOrderNo} already exists for Machine ${newMachine} on this date`
+      });
+    }
+
+    // ---------------------------------------------------------
+    // 🔥 ORDER SHIFTING INSIDE SAME MACHINE + DATE
+    // ---------------------------------------------------------
+    if (updates.orderNo && updates.orderNo !== fabric.orderNo) {
+      await listProcess.updateMany(
+        {
+          machineNo: newMachine,
+          date: newDate,
+          orderNo: { $gte: updates.orderNo }
+        },
+        {
+          $inc: { orderNo: 1 }
+        }
+      );
+    }
+
+    // ---------------------------------------------------------
+    // 🔥 RECEIVER NUMBER UPDATE
+    // ---------------------------------------------------------
+    if (updates.receiverNo && updates.receiverNo !== fabric.receiverNo) {
+      await User.updateMany(
+        { "assignedFabrics.receiverNo": fabric.receiverNo },
+        { $set: { "assignedFabrics.$.receiverNo": updates.receiverNo } }
+      );
+    }
+
+    // ---------------------------------------------------------
+    // 🔥 APPLY UPDATES (including date conversion)
+    // ---------------------------------------------------------
+    if (updates.date) updates.date = newDate;
+    Object.assign(fabric, updates);
+
+    fabric.history.push({
+      action: "Updated",
+      changes: updates,
+      user: req.user?.name || "System",
+      date: new Date()
+    });
+
+    await fabric.save();
 
     return res.status(200).json({
-      message: "Water & Fabric marked as Completed",
-      water,
-      fabric,
-      runningTime: (water.runningTime || 0).toFixed(2) + " minutes"
+      success: true,
+      message: "Fabric process updated successfully",
+      data: fabric
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+
+export const deleteFabricProcess = async (req, res) => {
+  try {
+    const { id } = req.params;   // 🔥 Delete using _id
+
+    const fabric = await listProcess.findById(id);
+    if (!fabric) {
+      return res.status(404).json({
+        success: false,
+        message: "Process not found for this ID"
+      });
+    }
+
+    const receiverNo = fabric.receiverNo;
+    const operator = fabric.operator;
+    const order = fabric.order;
+
+    // ------------------------------------
+    // 🔥 REMOVE ASSIGNMENTS FROM OPERATORS
+    // ------------------------------------
+    await User.updateMany(
+      {},
+      { $pull: { assignedFabrics: { receiverNo } } }
+    );
+
+    // ------------------------------------
+    // 🔥 DELETE PROCESS
+    // ------------------------------------
+    await listProcess.findByIdAndDelete(id);
+
+    // ------------------------------------
+    // 🔥 FIX ORDER OF REMAINING ITEMS
+    // ------------------------------------
+    await listProcess.updateMany(
+      { operator, order: { $gt: order } },
+      { $inc: { order: -1 } }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Fabric process deleted successfully"
+    });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================================
+// ALL FABRIC PROCESSES
+============================================================================ */
+
+
+export const getAllFabricProcesses = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.operator) filter.operator = req.query.operator;
+
+    // Fetch Fabric processes
+    const list = await listProcess
+      .find(filter)
+      .sort({ order: 1 })
+      .populate("customer");
+
+    // Attach water info to each fabric
+   const listWithWater = await Promise.all(
+      list.map(async (fabric) => {
+        const water = await Water.findOne({ receiverNo: fabric.receiverNo });
+        return {
+          ...fabric.toObject(),
+          water: water ? water.toObject() : null
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: listWithWater.length,
+      data: listWithWater
+    });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================================
+// GET FABRIC BY ID
+============================================================================ */
+export const getFabricProcessById = async (req, res) => {
+  try {
+    const fabric = await listProcess
+      .findById(req.params.id)
+      .populate("customer");
+
+    if (!fabric)
+      return res.status(404).json({ success: false, message: "Not found" });
+
+    return res.status(200).json({ success: true, data: fabric });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================================
+// MACHINE-WISE REPORT
+============================================================================ */
+export const getFabricReportByMachine = async (req, res) => {
+  try {
+    const { machineNo } = req.params;
+
+    if (!machineNo)
+      return res.status(400).json({ success: false, message: "machineNo is required" });
+
+    const fabrics = await listProcess
+      .find({ machineNo: new RegExp(`^${machineNo}$`, "i") })
+      .populate("customer")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const result = [];
+
+    for (const fabric of fabrics) {
+      const waterEntry = await Water.findOne({ receiverNo: fabric.receiverNo }).lean();
+      const waterCost = waterEntry?.totalWaterCost || 0;
+
+      result.push({
+        ...fabric,
+        waterCost,
+        totalCostWithWater: fabric.totalCost + waterCost,
+        waterProcess: waterEntry || null
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================================
+// RECEIVER-WISE REPORT
+============================================================================ */
+export const getFabricReportByReceiver = async (req, res) => {
+  try {
+    const { receiverNo } = req.params;
+
+    if (!receiverNo)
+      return res.status(400).json({ success: false, message: "receiverNo is required" });
+
+    const fabrics = await listProcess
+      .find({ receiverNo: new RegExp(receiverNo, "i") })
+      .populate("customer")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const result = [];
+
+    for (const fabric of fabrics) {
+      const waterEntry = await Water.findOne({ receiverNo: fabric.receiverNo }).lean();
+      const waterCost = waterEntry?.totalWaterCost || 0;
+
+      result.push({
+        ...fabric,
+        waterCost,
+        totalCostWithWater: fabric.totalCost + waterCost,
+        waterProcess: waterEntry || null
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================================
+// ADD DYES AND CHEMICALS
+============================================================================ */
+/* ============================================================================
+   ADD DYES AND CHEMICALS (Status must be Completed)
+   Automatically updates total cost
+============================================================================ */
+export const addDyesAndChemicalsByReceiver = async (req, res) => {
+  try {
+    const { receiverNo } = req.params;
+    const { dyes = [], chemicals = [] } = req.body;
+
+    const userName = req.user?.name || "System";
+
+    // Find latest entry by receiver number
+    const fabric = await listProcess
+      .findOne({ receiverNo })
+      .sort({ createdAt: -1 });
+
+    if (!fabric)
+      return res.status(404).json({ success: false, message: "Fabric not found" });
+
+    // Ensure process is completed
+    if (fabric.status !== "Completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Dyes/Chemicals can be added only to Completed fabrics"
+      });
+    }
+
+    // Push dyes & chemicals
+    if (Array.isArray(dyes) && dyes.length > 0) {
+      fabric.dyes.push(...dyes);
+    }
+
+    if (Array.isArray(chemicals) && chemicals.length > 0) {
+      fabric.chemicals.push(...chemicals);
+    }
+
+    // =======================
+    // COST CALCULATIONS
+    // =======================
+
+    // Dye total
+    const dyesCost = fabric.dyes.reduce((sum, item) => {
+      const qty = Number(item.qty) || 0;
+      const cost = Number(item.cost) || 0;
+      return sum + qty * cost;
+    }, 0);
+
+    // Chemical total
+    const chemicalsCost = fabric.chemicals.reduce((sum, item) => {
+      const qty = Number(item.qty) || 0;
+      const cost = Number(item.cost) || 0;
+      return sum + qty * cost;
+    }, 0);
+
+    // Base process cost (rate * qty)
+    const baseCost = (Number(fabric.rate) || 0) * (Number(fabric.qty) || 0);
+
+    // Auto update total cost
+    fabric.totalCost = baseCost + dyesCost + chemicalsCost;
+
+    // Save history
+    fabric.history.push({
+      action: "Added dyes/chemicals",
+      changes: { dyes, chemicals },
+      user: userName,
+      date: new Date()
+    });
+
+    await fabric.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Dyes and chemicals added successfully",
+      totalCost: fabric.totalCost,
+      costBreakup: {
+        baseCost,
+        dyesCost,
+        chemicalsCost
+      },
+      data: fabric
+    });
+
+  } catch (error) {
+    console.error("Error adding dyes/chemicals:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const getMachineQueue = async (req, res) => {
+  try {
+    const { machineNo } = req.query;
+
+    if (!machineNo) {
+      return res.status(400).json({ message: "Machine number required" });
+    }
+
+    const queue = await listProcess
+      .find({ machineNo })
+      .sort({ order: 1 }) // ALWAYS sorted by order
+      .lean();
+
+    return res.status(200).json({ success: true, queue });
+
+  } catch (error) {
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+
+export const getPendingForAllOperators = async (req, res) => {
+  try {
+    const pending = await listProcess
+      .find({
+        $or: [
+          { operator: { $exists: false } },
+          { operator: null },
+          { operator: "" }
+        ]
+      })
+      .sort({ machineNo: 1, order: 1 }) // machine-wise + order-wise sorting
+      .lean();
+    return res.status(200).json({
+      success: true,
+      count: pending.length,
+      pending
     });
   } catch (error) {
-    console.error("COST ERROR:", error);
+    console.error(error);
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+export const getFabricsByMachine = async (req, res) => {
+  try {
+    const { machineNo } = req.query;
+
+    if (!machineNo) {
+      return res.status(400).json({ success: false, message: "Machine number is required" });
+    }
+
+    const userRole = req.user?.role;
+    let filter = { machineNo };
+const todayRestrictedRoles = ["operator", "shiftincharge", "admin", "owner"];
+
+
+    if (todayRestrictedRoles.includes(userRole)) {
+      const today = getLocalMidnight(new Date());
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+
+      filter.date = { $gte: today, $lt: tomorrow };
+    }
+
+    const fabricList = await listProcess.find(filter).sort({ orderNo: 1 }).lean();
+
+    if (!fabricList.length) {
+      return res.status(404).json({
+        success: false,
+        message: userRole === "operator"
+          ? "No fabrics assigned today"
+          : "No fabrics found for this machine"
+      });
+    }
+
+    // Convert dates to IST
+    const dataWithIST = fabricList.map(f => ({
+      ...f,
+      date: toIST(f.date),
+      createdAt: toIST(f.createdAt),
+      updatedAt: toIST(f.updatedAt)
+    }));
+
+    return res.status(200).json({
+      success: true,
+      machineNo,
+      count: fabricList.length,
+      data: dataWithIST
+    });
+
+  } catch (error) {
+    console.error("Error fetching fabrics by machine:", error);
+    return res.status(500).json({ success: false, message: "Server Error", error: error.message });
+  }
+};
+
+export const getAllMachineReports = async (req, res) => {
+  try {
+    const fabricProcesses = await listProcess.find();
+    const waters = await Water.find().sort({ updatedAt: -1 });
+
+    const machineReport = [];
+    const machineMap = {};
+
+    // Group receivers per machine
+    for (const fp of fabricProcesses) {
+      if (!machineMap[fp.machineNo]) machineMap[fp.machineNo] = [];
+      machineMap[fp.machineNo].push(fp.receiverNo);
+    }
+
+    for (const machineNo of Object.keys(machineMap)) {
+      const receivers = machineMap[machineNo];
+
+      let latestValid = null;
+
+      // 🔥 FIND latest "running lifecycle" receiver
+      for (const rec of receivers) {
+        const history = waters.filter(w => w.receiverNo === rec);
+
+        if (!history.length) continue;
+
+        const latestRecord = history[0]; // newest record
+
+        // STEP 1: has Running at least once?
+        const hasRunning = history.some(w => w.status === "Running");
+
+        // If machine has never run → ignore this receiver
+        if (!hasRunning) continue;
+
+        // STEP 2: If lifecycle still active or latest one running / paused etc.
+        if (!latestValid) {
+          latestValid = latestRecord;
+          continue;
+        }
+
+        // STEP 3: Compare updated time
+        if (new Date(latestRecord.updatedAt) > new Date(latestValid.updatedAt)) {
+          latestValid = latestRecord;
+        }
+      }
+
+      // No active lifecycle found → PENDING machine
+      if (!latestValid) {
+        machineReport.push({
+          machineNo,
+          receiverNo: null,
+          status: "Pending",
+          operatorName: "-",
+          companyName: "-",
+          fabric: "-",
+          color: "-",
+          weight: "-",
+          dia: "-",
+          date: "-",
+          runningTime: 0,
+          startTimeFormatted: null,
+          endTimeFormatted: null
+        });
+        continue;
+      }
+
+      // Fetch fabric + customer detail
+      const fabricData = await listProcess.findOne({ receiverNo: latestValid.receiverNo });
+      const customer = await CustomerDetails.findOne({ receiverNo: latestValid.receiverNo });
+
+      machineReport.push({
+        machineNo,
+        receiverNo: latestValid.receiverNo,
+        status: latestValid.status,
+        operatorName: latestValid.operator || latestValid.startedBy || "Unknown",
+
+        companyName:
+          customer?.companyName ||
+          fabricData?.companyName ||
+          "Unknown",
+
+        fabric: customer?.fabric || fabricData?.fabric || "-",
+        color: customer?.color || fabricData?.color || "-",
+        weight: customer?.weight || fabricData?.weight || "-",
+        dia: customer?.dia || fabricData?.dia || "-",
+
+        date: latestValid.date
+          ? new Date(latestValid.date).toLocaleDateString("en-IN")
+          : "-",
+
+        runningTime: latestValid.runningTime ?? 0,
+        startTimeFormatted: latestValid.startTimeFormatted || null,
+        endTimeFormatted: latestValid.endTimeFormatted || null
+      });
+    }
+
+    // Priority Sort
+    const priority = { Running: 1, Paused: 2, Stopped: 3, Completed: 4, Pending: 5 };
+
+    machineReport.sort((a, b) => priority[a.status] - priority[b.status]);
+
+    return res.status(200).json({
+      success: true,
+      count: machineReport.length,
+      data: machineReport
+    });
+
+  } catch (error) {
+    console.log("FINAL MACHINE REPORT ERROR:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error"
+    });
+  }
+};
+
+const getDayRange = (inputDate) => {
+  const date = inputDate ? new Date(inputDate) : new Date();
+  date.setHours(0, 0, 0, 0);
+  const start = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  const end = new Date(start);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+export const getOperatorDashboard = async (req, res) => {
+  try {
+    const { date } = req.query; // optional date filter
+    const { start, end } = getDayRange(date);
+
+    // Fetch all work for all operators
+    const work = await listProcess.find({
+      status: { $in: ["Running", "Paused", "Stopped", "Reprocess", "Completed"] },
+      date: { $gte: start, $lte: end }
+    }).sort({ date: -1 });
+
+    if (!work || work.length === 0) {
+      return res.status(200).json({ message: "No work found for this date", data: [] });
+    }
+
+    const data = await Promise.all(work.map(async (item) => {
+      const water = await Water.findOne({ receiverNo: item.receiverNo }).sort({ createdAt: -1 });
+      const customer = await CustomerDetails.findOne({ receiverNo: item.receiverNo });
+
+      return {
+        operator: item.operator,                  // get operator(s) from listProcess
+        machineNo: item.machineNo,
+        receiverNo: item.receiverNo,
+        runningTime: item.runningTime || 0,
+        status: item.status,
+        startTimeFormatted: water?.startTimeFormatted || "-",
+        endTimeFormatted: water?.endTimeFormatted || "-",
+        customer: {
+          companyName: customer?.companyName || "Unknown",
+          color: customer?.color || "-",
+          weight: customer?.weight || "-"
+        }
+      };
+    }));
+
+    return res.status(200).json({
+      message: "Operator dashboard fetched successfully",
+      data
+    });
+
+  } catch (error) {
+    console.error("OPERATOR DASHBOARD ERROR:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+export const getWaterIdByFabricProcessId = async (req, res) => {
+  try {
+    const { id } = req.params; // listProcess ID
+
+    // 1. Find list process
+    const fabricProcess = await listProcess.findById(id);
+
+    if (!fabricProcess) {
+      return res.status(404).json({
+        message: "Fabric process not found"
+      });
+    }
+
+    // 2. Extract receiverNo
+    const receiverNo = fabricProcess.receiverNo;
+
+    // 3. Match with Water collection
+    const waterRecord = await Water.findOne({ receiverNo });
+
+    return res.status(200).json({
+      message: "Matched successfully",
+      receiverNo,
+      waterId: waterRecord ? waterRecord._id : null
+    });
+
+  } catch (error) {
+    console.error("Lookup Error:", error);
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message
+    });
   }
 };
