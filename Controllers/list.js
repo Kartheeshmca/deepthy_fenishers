@@ -2,11 +2,6 @@ import listProcess from "../Models/list.js";
 import CustomerDetails from "../Models/Customer.js";
 import User from "../Models/User.js";
 import Water from "../Models/Water.js";
-import MachineStatus from "../Models/Machinestatus.js";
-
-
-import { sendWhatsApp } from "../Utils/twilio.js";
-import { owners } from "../Config/owners.js";
 
 
 
@@ -226,7 +221,7 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
         🔁 Update old job status + history
     ============================================================= */
     await listProcess.findByIdAndUpdate(previous._id, {
-      status: "Reprocess",
+      status: "Re-Completed",
       $push: {
         history: {
           action: "Re-Process Started",
@@ -942,39 +937,51 @@ const todayRestrictedRoles = ["operator", "shiftincharge", "admin", "owner"];
 
 export const getAllMachineReports = async (req, res) => {
   try {
-    // 1️⃣ Load all machines from list.js
     const fabricProcesses = await listProcess.find();
-    const machineToReceivers = {};
-
-    for (const fp of fabricProcesses) {
-      if (!machineToReceivers[fp.machineNo]) {
-        machineToReceivers[fp.machineNo] = [];
-      }
-      machineToReceivers[fp.machineNo].push(fp.receiverNo);
-    }
-
-    // 2️⃣ Load ALL water records
     const waters = await Water.find().sort({ updatedAt: -1 });
 
     const machineReport = [];
+    const machineMap = {};
 
-    for (const machineNo of Object.keys(machineToReceivers)) {
-      const receivers = machineToReceivers[machineNo];
+    // Group receivers per machine
+    for (const fp of fabricProcesses) {
+      if (!machineMap[fp.machineNo]) machineMap[fp.machineNo] = [];
+      machineMap[fp.machineNo].push(fp.receiverNo);
+    }
 
-      let latestWater = null;
+    for (const machineNo of Object.keys(machineMap)) {
+      const receivers = machineMap[machineNo];
 
-      // 3️⃣ Pick latest water among multiple receiver numbers
+      let latestValid = null;
+
+      // 🔥 FIND latest "running lifecycle" receiver
       for (const rec of receivers) {
-        const w = waters.find(w => w.receiverNo === rec);
-        if (!w) continue;
+        const history = waters.filter(w => w.receiverNo === rec);
 
-        if (!latestWater || new Date(w.updatedAt) > new Date(latestWater.updatedAt)) {
-          latestWater = w;
+        if (!history.length) continue;
+
+        const latestRecord = history[0]; // newest record
+
+        // STEP 1: has Running at least once?
+        const hasRunning = history.some(w => w.status === "Running");
+
+        // If machine has never run → ignore this receiver
+        if (!hasRunning) continue;
+
+        // STEP 2: If lifecycle still active or latest one running / paused etc.
+        if (!latestValid) {
+          latestValid = latestRecord;
+          continue;
+        }
+
+        // STEP 3: Compare updated time
+        if (new Date(latestRecord.updatedAt) > new Date(latestValid.updatedAt)) {
+          latestValid = latestRecord;
         }
       }
 
-      // 4️⃣ No water yet → Pending
-      if (!latestWater) {
+      // No active lifecycle found → PENDING machine
+      if (!latestValid) {
         machineReport.push({
           machineNo,
           receiverNo: null,
@@ -993,49 +1000,56 @@ export const getAllMachineReports = async (req, res) => {
         continue;
       }
 
-      // 5️⃣ Get customer details
-      const customer = await CustomerDetails.findOne({
-        receiverNo: latestWater.receiverNo
-      });
+      // Fetch fabric + customer detail
+      const fabricData = await listProcess.findOne({ receiverNo: latestValid.receiverNo });
+      const customer = await CustomerDetails.findOne({ receiverNo: latestValid.receiverNo });
 
       machineReport.push({
         machineNo,
-        receiverNo: latestWater.receiverNo,
-        status: latestWater.status,
-        operatorName: latestWater.operator || latestWater.startedBy || "Unknown",
-        companyName: customer?.companyName || "Unknown",
-        fabric: customer?.fabric || null,
-        color: customer?.color || null,
-        weight: customer?.weight || null,
-        dia: customer?.dia || null,
-        date: latestWater.date
-          ? new Date(latestWater.date).toLocaleDateString("en-IN")
+        receiverNo: latestValid.receiverNo,
+        status: latestValid.status,
+        operatorName: latestValid.operator || latestValid.startedBy || "Unknown",
+
+        companyName:
+          customer?.companyName ||
+          fabricData?.companyName ||
+          "Unknown",
+
+        fabric: customer?.fabric || fabricData?.fabric || "-",
+        color: customer?.color || fabricData?.color || "-",
+        weight: customer?.weight || fabricData?.weight || "-",
+        dia: customer?.dia || fabricData?.dia || "-",
+
+        date: latestValid.date
+          ? new Date(latestValid.date).toLocaleDateString("en-IN")
           : "-",
-        runningTime: latestWater.runningTime ?? 0,
-        startTimeFormatted: latestWater.startTimeFormatted || null,
-        endTimeFormatted: latestWater.endTimeFormatted || null
+
+        runningTime: latestValid.runningTime ?? 0,
+        startTimeFormatted: latestValid.startTimeFormatted || null,
+        endTimeFormatted: latestValid.endTimeFormatted || null
       });
     }
 
-    // 6️⃣ Priority Sorting
-    const priority = { Running: 1, Paused: 2, Freezed: 3, Completed: 4, Pending: 5 };
+    // Priority Sort
+    const priority = { Running: 1, Paused: 2, Stopped: 3, Completed: 4, Pending: 5 };
 
     machineReport.sort((a, b) => priority[a.status] - priority[b.status]);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       count: machineReport.length,
       data: machineReport
     });
 
   } catch (error) {
-    console.log("MACHINE REPORT ERROR:", error);
+    console.log("FINAL MACHINE REPORT ERROR:", error);
     res.status(500).json({
       success: false,
       message: "Server Error"
     });
   }
 };
+
 const getDayRange = (inputDate) => {
   const date = inputDate ? new Date(inputDate) : new Date();
   date.setHours(0, 0, 0, 0);
