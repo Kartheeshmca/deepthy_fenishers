@@ -16,9 +16,25 @@ const addWaterHistory = (water, action, changes = {}, user = "System") => {
     date: new Date()
   });
 };
-const formatTime = (date) => {
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+// Convert any date to 00:00 India local date
+
+
+// Convert timestamp to India format
+const toIST = (date) => {
+  return new Date(date).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 };
+
+const formatTime = (date) => {
+  return new Date(date)
+    .toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata"
+    });
+};
+
 const notifyOwners = async (water, customer, action) => {
   const actionConfig = {
     "Running": { emoji: "🟢" },
@@ -122,11 +138,14 @@ export const startWaterProcess = async (req, res) => {
       receiverNo,
       openingReading,
       startTime: new Date(),
-      startTimeFormatted: formatTime(now),
+      startTimeFormatted: formatTime(toIST(now)),    
       status: "Running",
       runningTime: 0,
       startedBy: userName,
-      operator: userName,   // Store Operator Here
+      operator: userName,
+      machineNo:fabric.machineNo,
+         // Store Operator Here
+
       history: [
         {
           action: "Process Started",
@@ -382,7 +401,7 @@ export const stopWaterProcess = async (req, res) => {
     // Stop the process
     water.status = "Stopped"; // or "Completed" if you prefer
     water.endTime = now;
-    water.endTimeFormatted = formatTime(now);
+    water.endTimeFormatted = formatTime(toIST(now));
     // water.closingReading = closingReading;
 
     addWaterHistory(
