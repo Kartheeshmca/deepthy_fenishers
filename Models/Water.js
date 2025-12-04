@@ -6,6 +6,7 @@ const historySchema = new mongoose.Schema({
   date: { type: Date, default: Date.now }
 }, { _id: false });
 const waterProcessSchema = new mongoose.Schema({
+  machineNo: { type: String, trim: true },
   receiverNo: { type: String, trim: true },
   remarks: { type: String, trim: true },
   openingReading: { type: Number, min: 0 },
