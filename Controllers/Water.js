@@ -534,6 +534,7 @@ export const calculateWaterCost = async (req, res) => {
       fabric.status = "Completed";
       fabric.operator = water.operator;
       fabric.waterCost = cost;
+      fabric.totalCost = Number(fabric.totalCost || 0) + Number(cost || 0);
       fabric.runningTime = water.runningTime || 0;
       fabric.history = fabric.history || [];
       fabric.history.push({
@@ -556,5 +557,64 @@ export const calculateWaterCost = async (req, res) => {
   } catch (error) {
     console.error("COST ERROR:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+export const getLatestProcessPerMachine = async (req, res) => {
+  try {
+    // Fetch ALL statuses, but sorted by latest first
+    const processes = await Water.find({
+      status: { 
+        $in: ["Running", "Paused", "Reprocess", "Stopped", "Completed"] 
+      }
+    })
+    .sort({ createdAt: -1 })  // latest entry for each machine
+    .lean();
+
+    if (!processes.length) {
+      return res.status(200).json({
+        message: "No process found",
+        data: []
+      });
+    }
+
+    const latestPerMachine = {};
+
+    for (const process of processes) {
+      const machineNo = process.machineNo;
+
+      // if machine is already added => skip older ones
+      if (latestPerMachine[machineNo]) continue;
+
+      const customer = await CustomerDetails.findOne({
+        receiverNo: process.receiverNo
+      }).lean();
+
+      // Store the latest process for this machine
+      latestPerMachine[machineNo] = {
+        machineNo,
+        receiverNo: process.receiverNo,
+        status: process.status,
+        operator: process.operator || "Unknown",
+        startTimeFormatted: process.startTimeFormatted || "-",
+        endTimeFormatted: process.endTimeFormatted || "-",
+        runningTime: process.runningTime || 0,
+        remarks: process.remarks || "-",
+        customer: customer || {},
+        updatedAt: process.updatedAt,
+        createdAt: process.createdAt
+      };
+    }
+
+    return res.status(200).json({
+      message: "Latest process per machine (all statuses)",
+      data: Object.values(latestPerMachine)
+    });
+
+  } catch (error) {
+    console.error("LATEST MACHINE ERROR:", error);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: error.message 
+    });
   }
 };
