@@ -3,7 +3,8 @@ import {
   startWaterProcess,
   pauseWaterProcess,
   stopWaterProcess,
-  calculateWaterCost
+  calculateWaterCost,
+  getLatestProcessPerMachine
 } from "../Controllers/Water.js";
 import { protect, roleCheck } from "../Middleware/Auth.js";
 const router = express.Router();
@@ -38,5 +39,11 @@ router.post(
   protect,
   roleCheck(["admin", "owner","operator"]),
   calculateWaterCost
+);
+router.get(
+  "/machine",
+  protect,
+  roleCheck(["admin","owner","operator"]),
+  getLatestProcessPerMachine
 );
 export default router;
