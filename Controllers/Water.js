@@ -561,13 +561,12 @@ export const calculateWaterCost = async (req, res) => {
 };
 export const getLatestProcessPerMachine = async (req, res) => {
   try {
-    // Fetch ALL statuses, but sorted by latest first
     const processes = await Water.find({
       status: { 
         $in: ["Running", "Paused", "Reprocess", "Stopped", "Completed"] 
       }
     })
-    .sort({ createdAt: -1 })  // latest entry for each machine
+    .sort({ createdAt: -1 })
     .lean();
 
     if (!processes.length) {
@@ -582,31 +581,38 @@ export const getLatestProcessPerMachine = async (req, res) => {
     for (const process of processes) {
       const machineNo = process.machineNo;
 
-      // if machine is already added => skip older ones
       if (latestPerMachine[machineNo]) continue;
 
       const customer = await CustomerDetails.findOne({
         receiverNo: process.receiverNo
       }).lean();
 
-      // Store the latest process for this machine
       latestPerMachine[machineNo] = {
         machineNo,
         receiverNo: process.receiverNo,
         status: process.status,
-        operator: process.operator || "Unknown",
+
+        operatorName: process.operator || "Unknown",
+
+        companyName: customer?.companyName || "-",
+        fabric: customer?.fabric || "-",
+        color: customer?.color || "-",
+        weight: customer?.weight || "-",
+        dia: customer?.dia || "-",
+
+        date: process.date || "-",
+        runningTime: process.runningTime || 0,
         startTimeFormatted: process.startTimeFormatted || "-",
         endTimeFormatted: process.endTimeFormatted || "-",
-        runningTime: process.runningTime || 0,
+
         remarks: process.remarks || "-",
-        customer: customer || {},
         updatedAt: process.updatedAt,
         createdAt: process.createdAt
       };
     }
 
     return res.status(200).json({
-      message: "Latest process per machine (all statuses)",
+      message: "Latest process per machine",
       data: Object.values(latestPerMachine)
     });
 
