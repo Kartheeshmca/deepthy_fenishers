@@ -379,53 +379,71 @@ const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo })
 ===================================================== */
 export const stopWaterProcess = async (req, res) => {
   try {
-    const { id} = req.params; // <-- get water process ID from URL
-     const {endTimeFormattedFE}=req.body;
-    // const { closingReading } = req.body;
+    const { id } = req.params;
+    const { endTimeFormattedFE } = req.body;
     const userName = req.user?.name || "System";
 
-    // Find water process by ID (must be Running or Paused)
+    // 1️⃣ Find Water Process
     const water = await Water.findOne({
       _id: id,
       status: { $in: ["Running", "Paused"] }
     });
 
-    if (!water) return res.status(404).json({ message: "Water record not found" });
+    if (!water) {
+      return res.status(404).json({ message: "Water record not found" });
+    }
 
     const now = new Date();
 
-    // Update running time if process was running
+    // 2️⃣ Update running time
     if (water.startTime) {
-      water.runningTime += (now - new Date(water.startTime)) / 60000;
+      const minutes = (now - new Date(water.startTime)) / 60000;
+      water.runningTime += minutes;
       water.runningTime = Number(water.runningTime.toFixed(2));
     }
 
-    // Stop the process
-    water.status = "Stopped"; // or "Completed" if you prefer
+    // 3️⃣ Update fields
+    water.status = "Stopped";
     water.endTime = now;
-    water.endTimeFormatted = endTimeFormattedFE;
-    // water.closingReading = closingReading;
 
+    // Fix: If frontend forgets to send formatted time
+    water.endTimeFormatted =
+      endTimeFormattedFE ||
+      now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+
+    // Add history record
     addWaterHistory(
       water,
       "Stopped",
-      {  runningTime: water.runningTime },
+      {
+        runningTime: water.runningTime
+      },
       userName
     );
 
+    // 4️⃣ Save
     await water.save();
 
-    // Optionally, update related listProcess by receiverNo
+    // 5️⃣ Update related listProcess
     if (water.receiverNo) {
       await listProcess.updateOne(
         { receiverNo: water.receiverNo },
-        { status: "Stopped",
-          runningTime: water.runningTime 
-         }
+        {
+          status: "Stopped",
+          runningTime: water.runningTime
+        }
       );
-    }const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
+    }
 
-  notifyOwners(water, customer, "Stopped");
+    // 6️⃣ Fetch customer details (for notifyOwners)
+    const customer = await CustomerDetails.findOne({
+      receiverNo: water.receiverNo
+    });
+
+    // 7️⃣ Notify owners
+    notifyOwners(water, customer, "Stopped");
+
+    // 8️⃣ Response
     return res.status(200).json({
       message: "Water process stopped successfully",
       water
@@ -433,7 +451,10 @@ export const stopWaterProcess = async (req, res) => {
 
   } catch (error) {
     console.error("STOP ERROR:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message
+    });
   }
 };
 
