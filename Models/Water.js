@@ -34,7 +34,7 @@ const waterProcessSchema = new mongoose.Schema({
     default: () => new Date().toLocaleTimeString('en-GB', { hour12: false })
   }
 
-});
+}, { timestamps: true });
 
 const Water = mongoose.model("Water", waterProcessSchema);
 export default Water; // <- default export
