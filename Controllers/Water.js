@@ -114,7 +114,7 @@ ${config.emoji} *${action}* ${config.emoji}
 // Helper: Send Notification
 export const startWaterProcess = async (req, res) => {
   try {
-    const { receiverNo, openingReading, startTimeFormattedFE} = req.body;
+    const { receiverNo, openingReading,startTimeFormattedFE } = req.body;
     const userName = req.user?.name || "System";
 
     if (!receiverNo) {
@@ -379,7 +379,7 @@ const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo })
 ===================================================== */
 export const stopWaterProcess = async (req, res) => {
   try {
-    const { id } = req.params; // <-- get water process ID from URL
+    const { id ,endTimeFormattedFE} = req.params; // <-- get water process ID from URL
     // const { closingReading } = req.body;
     const userName = req.user?.name || "System";
 
@@ -402,7 +402,7 @@ export const stopWaterProcess = async (req, res) => {
     // Stop the process
     water.status = "Stopped"; // or "Completed" if you prefer
     water.endTime = now;
-    water.endTimeFormatted = formatTime(toIST(now));
+    water.endTimeFormatted = endTimeFormattedFE;
     // water.closingReading = closingReading;
 
     addWaterHistory(
