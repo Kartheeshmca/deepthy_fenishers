@@ -379,7 +379,8 @@ const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo })
 ===================================================== */
 export const stopWaterProcess = async (req, res) => {
   try {
-    const { id ,endTimeFormattedFE} = req.params; // <-- get water process ID from URL
+    const { id} = req.params; // <-- get water process ID from URL
+     const {endTimeFormattedFE}=req.body;
     // const { closingReading } = req.body;
     const userName = req.user?.name || "System";
 
