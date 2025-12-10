@@ -114,7 +114,7 @@ ${config.emoji} *${action}* ${config.emoji}
 // Helper: Send Notification
 export const startWaterProcess = async (req, res) => {
   try {
-    const { receiverNo, openingReading } = req.body;
+    const { receiverNo, openingReading, startTimeFormattedFE} = req.body;
     const userName = req.user?.name || "System";
 
     if (!receiverNo) {
