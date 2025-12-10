@@ -184,96 +184,7 @@ const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo })
   }
 };
 
-/* =====================================================
-   PAUSE WATER PROCESS
-===================================================== */
-// export const pauseWaterProcess = async (req, res) => {
-//   try {
-//     const { id } = req.params; // <-- use ID from URL
-//     const { remarks } = req.body;
-//     const userName = req.user?.name || "System";
 
-//     // Find water process by ID
-//     const water = await Water.findById(id);
-//     if (!water) return res.status(404).json({ message: "Water record not found" });
-
-//     /* -----------------------------------------------------
-//        CASE 1: PROCESS IS RUNNING → PAUSE IT
-//     ----------------------------------------------------- */
-//     if (water.status === "Running") {
-//       const now = new Date();
-
-//       // Add running time until now
-//       if (water.startTime) {
-//         water.runningTime += (now - new Date(water.startTime)) / 60000;
-//         water.runningTime = Number(water.runningTime.toFixed(2));
-//       }
-
-//       // Update to Paused
-//       water.status = "Paused";
-//       water.startTime = null;
-//       water.remarks = remarks;
-
-//       addWaterHistory(
-//         water,
-//         "Paused",
-//         { runningTime: water.runningTime, remarks },
-//         userName
-//       );
-
-//       await water.save();
-
-//       // Optionally, update related listProcess by receiverNo
-//       if (water.receiverNo) {
-//         await listProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Paused" });
-//       }
-
-//       return res.status(200).json({
-//         message: "Water process paused",
-//         water
-//       });
-//     }
-
-//     /* -----------------------------------------------------
-//        CASE 2: PROCESS IS PAUSED → RESUME IT
-//     ----------------------------------------------------- */
-//     if (water.status === "Paused") {
-//       water.startTime = new Date();
-//       water.status = "Running";
-//       water.remarks = remarks;
-
-//       addWaterHistory(
-//         water,
-//         "Resumed",
-//         { remarks },
-//         userName
-//       );
-
-//       await water.save();
-
-//       // Optionally, update related listProcess by receiverNo
-//       if (water.receiverNo) {
-//         await listProcess.updateOne({ receiverNo: water.receiverNo }, { status: "Running" , runningtime: water.runningTime });
-//       }
-
-//       return res.status(200).json({
-//         message: "Water process resumed",
-//         water
-//       });
-//     }
-
-//     /* -----------------------------------------------------
-//        IF OTHER STATUS
-//     ----------------------------------------------------- */
-//     return res.status(400).json({
-//       message: `Cannot toggle when status is ${water.status}`
-//     });
-
-//   } catch (error) {
-//     console.error("TOGGLE ERROR:", error);
-//     return res.status(500).json({ message: "Server error", error: error.message });
-//   }
-// };
 export const pauseWaterProcess = async (req, res) => {
   try {
     const { id } = req.params; 
@@ -379,71 +290,54 @@ const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo })
 ===================================================== */
 export const stopWaterProcess = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { endTimeFormattedFE } = req.body;
+    const { id} = req.params; // <-- get water process ID from URL
+    const { endTimeFormattedFE } = req.body;    
+
+    // const { closingReading } = req.body;
     const userName = req.user?.name || "System";
 
-    // 1️⃣ Find Water Process
+    // Find water process by ID (must be Running or Paused)
     const water = await Water.findOne({
       _id: id,
       status: { $in: ["Running", "Paused"] }
     });
 
-    if (!water) {
-      return res.status(404).json({ message: "Water record not found" });
-    }
+    if (!water) return res.status(404).json({ message: "Water record not found" });
 
     const now = new Date();
 
-    // 2️⃣ Update running time
+    // Update running time if process was running
     if (water.startTime) {
-      const minutes = (now - new Date(water.startTime)) / 60000;
-      water.runningTime += minutes;
+      water.runningTime += (now - new Date(water.startTime)) / 60000;
       water.runningTime = Number(water.runningTime.toFixed(2));
     }
 
-    // 3️⃣ Update fields
-    water.status = "Stopped";
+    // Stop the process
+    water.status = "Stopped"; // or "Completed" if you prefer
     water.endTime = now;
+    water.endTimeFormatted = endTimeFormattedFE;
+    // water.closingReading = closingReading;
 
-    // Fix: If frontend forgets to send formatted time
-    water.endTimeFormatted =
-      endTimeFormattedFE ||
-      now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-
-    // Add history record
     addWaterHistory(
       water,
       "Stopped",
-      {
-        runningTime: water.runningTime
-      },
+      {  runningTime: water.runningTime },
       userName
     );
 
-    // 4️⃣ Save
     await water.save();
 
-    // 5️⃣ Update related listProcess
+    // Optionally, update related listProcess by receiverNo
     if (water.receiverNo) {
       await listProcess.updateOne(
         { receiverNo: water.receiverNo },
-        {
-          status: "Stopped",
-          runningTime: water.runningTime
-        }
+        { status: "Stopped",
+          runningTime: water.runningTime 
+         }
       );
-    }
+    }const customer = await CustomerDetails.findOne({ receiverNo: water.receiverNo });
 
-    // 6️⃣ Fetch customer details (for notifyOwners)
-    const customer = await CustomerDetails.findOne({
-      receiverNo: water.receiverNo
-    });
-
-    // 7️⃣ Notify owners
-    notifyOwners(water, customer, "Stopped");
-
-    // 8️⃣ Response
+  notifyOwners(water, customer, "Stopped");
     return res.status(200).json({
       message: "Water process stopped successfully",
       water
@@ -451,67 +345,10 @@ export const stopWaterProcess = async (req, res) => {
 
   } catch (error) {
     console.error("STOP ERROR:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-
-/* =====================================================
-   CALCULATE WATER COST
-===================================================== */
-// export const calculateWaterCost = async (req, res) => {
-//   try {
-//     const { id } = req.body;
-//     const userName = req.user?.name || "Unknown";
-
-//     const water = await Water.findById(id);
-//     if (!water)
-//       return res.status(404).json({ message: "Water process not found" });
-
-//     const customer = await CustomerDetails.findOne({
-//       receiverNo: water.receiverNo
-//     });
-
-//     if (!customer)
-//       return res.status(404).json({ message: "Customer details not found" });
-
-//     const weight = customer.weight || 1;
-//     const units =
-//       (water.closingReading || 0) - (water.openingReading || 0);
-
-//     let cost = Number(((units / weight) * 0.4).toFixed(2));
-//     if (isNaN(cost) || cost < 0) cost = 0;
-
-//     water.totalWaterCost = cost;
-
-//     water.status = "Completed";
-
-//     addWaterHistory(
-//       water,
-//       "Completed",
-//       { totalWaterCost: water.totalWaterCost },
-//       userName
-//     );
-
-//     await water.save();
-
-//     return res.status(200).json({
-//       message: "Water cost calculated & process marked as Completed",
-//       water,
-//       runningTime: water.runningTime.toFixed(2) + " minutes"
-//     });
-
-//   } catch (error) {
-//     console.error("COST ERROR:", error);
-//     return res.status(500).json({
-//       message: "Server error",
-//       error: error.message
-//     });
-//   }
-// };
 export const calculateWaterCost = async (req, res) => {
   try {
     const { id } = req.params;
@@ -584,17 +421,29 @@ export const calculateWaterCost = async (req, res) => {
 };
 export const getLatestProcessPerMachine = async (req, res) => {
   try {
+    // TODAY (IST)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    // Fetch today's work (NO Pending)
     const processes = await Water.find({
       status: { 
-        $in: ["Running", "Paused", "Reprocess", "Stopped", "Completed"] 
+        $nin: ["Pending"]            // <-- REMOVE PENDING
+      },
+      updatedAt: { 
+        $gte: todayStart, 
+        $lte: todayEnd 
       }
     })
-    .sort({ createdAt: -1 })
+    .sort({ updatedAt: -1 })   // latest first
     .lean();
 
     if (!processes.length) {
       return res.status(200).json({
-        message: "No process found",
+        message: "No work done today",
         data: []
       });
     }
@@ -614,7 +463,6 @@ export const getLatestProcessPerMachine = async (req, res) => {
         machineNo,
         receiverNo: process.receiverNo,
         status: process.status,
-
         operatorName: process.operator || "Unknown",
 
         companyName: customer?.companyName || "-",
@@ -627,23 +475,28 @@ export const getLatestProcessPerMachine = async (req, res) => {
         runningTime: process.runningTime || 0,
         startTimeFormatted: process.startTimeFormatted || "-",
         endTimeFormatted: process.endTimeFormatted || "-",
-
         remarks: process.remarks || "-",
+
         updatedAt: process.updatedAt,
-        createdAt: process.createdAt
+        createdAt: process.createdAt,
       };
     }
 
+    // Sort by machine number
+    const sorted = Object.values(latestPerMachine).sort(
+      (a, b) => (a.machineNo > b.machineNo ? 1 : -1)
+    );
+
     return res.status(200).json({
-      message: "Latest process per machine",
-      data: Object.values(latestPerMachine)
+      message: "Today's completed work per machine",
+      data: sorted
     });
 
   } catch (error) {
-    console.error("LATEST MACHINE ERROR:", error);
-    return res.status(500).json({ 
-      message: "Server error", 
-      error: error.message 
+    console.error("TODAY WORK ERROR:", error);
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message
     });
   }
 };
