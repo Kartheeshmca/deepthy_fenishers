@@ -73,7 +73,7 @@ router.get(
 );
 
 // Reprocess
-router.put(
+router.patch(
   "/reprocess/:id",
   protect,
   roleCheck(["admin", "owner", "shiftincharge"]),
