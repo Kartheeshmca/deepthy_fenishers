@@ -292,9 +292,6 @@ export const getAllUsers = async (req, res) => {
     });
   }
 };
-
-// GET USER BY ID
-// ==================== GET USER BY ID ====================
 export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -312,12 +309,35 @@ export const getUserById = async (req, res) => {
       });
     };
 
+    // ===================== FETCH WORK DONE =====================  
+    // If user role is operator or admin → fetch work
+    let workDone = [];
+    if (["operator", "admin"].includes(user.role)) {
+      workDone = await listProcess.find({ operator: user.name }) // operators stored as string array
+        .sort({ createdAt: -1 })
+        .select("machineNo receiverNo qty runningTime orderNo date status");
+    }
+
+    // Convert date → IST for each work item
+    const formattedWork = workDone.map((w) => ({
+      id: w._id,
+      machineNo: w.machineNo,
+      receiverNo: w.receiverNo,
+      qty: w.qty,
+      runningTime: w.runningTime,
+      orderNo: w.orderNo,
+      date: toIST(w.date),
+      status: w.status,
+    }));
+
+    // ===================== FORMAT USER =====================  
     const formattedUser = {
       id: user._id,
       name: user.name,
       phone: user.phone,
       role: user.role,
       status: user.status || "inactive",
+      workDone: formattedWork,
       meta: {
         lastLogin: user.meta?.lastLogin ? toIST(user.meta.lastLogin) : null,
         lastLogout: user.meta?.lastLogout ? toIST(user.meta.lastLogout) : null,
@@ -329,7 +349,9 @@ export const getUserById = async (req, res) => {
       success: true,
       user: formattedUser,
     });
+
   } catch (error) {
+    console.error(error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
