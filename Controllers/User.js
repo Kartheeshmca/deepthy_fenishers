@@ -1,6 +1,7 @@
 import User from "../Models/User.js";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
+import listProcess from "../Models/list.js";
 import { UAParser } from "ua-parser-js";
 dotenv.config();
 
@@ -54,7 +55,6 @@ export const createUser = async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
     const requesterRole = req.user.role;
-
     // Validation
     if (!role) return res.status(400).json({ message: "Role is required" });
     if (!["owner", "admin", "shiftincharge", "operator"].includes(role))
@@ -191,33 +191,28 @@ export const logout = async (req, res) => {
 
 // GET ALL USERS (frontend-controlled pagination & latest first)
 // ==================== GET ALL USERS ====================
+
 export const getAllUsers = async (req, res) => {
   try {
-    const requester = req.user; // logged in user details from middleware
-    const { page = 1, limit = 10 } = req.query;
+    const requester = req.user; 
 
     let filter = {};
 
     // ======================= ROLE RESTRICTIONS =========================
 
     if (requester.role === "owner") {
-      // owner sees everyone → no filter needed
       filter = {};
-    }
-
+    } 
     else if (requester.role === "admin") {
-      // admin sees: own profile + all shiftincharge + all operators
       filter = {
         $or: [
-          { _id: requester.id },          // own profile
+          { _id: requester.id },
           { role: "shiftincharge" },
           { role: "operator" }
         ]
       };
     }
-
     else if (requester.role === "shiftincharge") {
-      // shift-incharge sees: own + operators
       filter = {
         $or: [
           { _id: requester.id },
@@ -225,22 +220,40 @@ export const getAllUsers = async (req, res) => {
         ]
       };
     }
-
     else if (requester.role === "operator") {
-      // operator sees only own profile
       filter = { _id: requester.id };
     }
 
-    // ======================= QUERY USERS =========================
+    // ======================= FETCH USERS (NO PAGINATION) =========================
 
-    const users = await User.find(filter)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(Number(limit));
+    const users = await User.find(filter).sort({ createdAt: -1 });
 
-    const totalUsers = await User.countDocuments(filter);
+    // ======================= FETCH WORK DONE FOR EACH OPERATOR =========================
 
-    // ======================= Convert UTC → IST =========================
+    const workMap = {};
+
+    const allProcesses = await listProcess.find({}); 
+
+    allProcesses.forEach((p) => {
+      if (Array.isArray(p.operator)) {
+        p.operator.forEach((op) => {
+          if (!workMap[op]) workMap[op] = [];
+          workMap[op].push({
+            id: p._id,
+            machineNo: p.machineNo,
+            receiverNo: p.receiverNo,
+            qty: p.qty,
+            runningTime: p.runningTime,
+            orderNo: p.orderNo,
+            date: p.date,
+            status: p.status
+          });
+        });
+      }
+    });
+
+    // ======================= FORMAT USER =========================
+
     const toIST = (utcDate) => {
       if (!utcDate) return null;
       return new Date(utcDate).toLocaleString("en-IN", {
@@ -248,13 +261,16 @@ export const getAllUsers = async (req, res) => {
       });
     };
 
-    // ======================= FORMAT USER =========================
     const formatUser = (u) => ({
       id: u._id,
       name: u.name,
       phone: u.phone,
       role: u.role,
       status: u.status || "inactive",
+
+      // 👇 NEW — Operator work history from listProcess
+      workDone: workMap[u.name] || [],
+
       meta: {
         lastLogin: u.meta?.lastLogin ? toIST(u.meta.lastLogin) : null,
         lastLogout: u.meta?.lastLogout ? toIST(u.meta.lastLogout) : null,
@@ -264,17 +280,19 @@ export const getAllUsers = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      page: Number(page),
-      limit: Number(limit),
-      totalUsers,
+      total: users.length,
       users: users.map(formatUser),
     });
 
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
+
 // GET USER BY ID
 // ==================== GET USER BY ID ====================
 export const getUserById = async (req, res) => {
