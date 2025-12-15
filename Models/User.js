@@ -49,7 +49,7 @@ const assignedFabricSchema = new mongoose.Schema({
 
 const userSchema = new mongoose.Schema({
   name: { type: String, trim: true, set: capitalizeName },
-  phone: { type: String, unique: true, match: [/^\d{10}$/] },
+  phone: { type: String, match: [/^\d{10}$/] },
   password: { type: String, required: true },
   role: { type: String, enum: ["owner", "admin", "shiftincharge", "operator"], default: "operator" },
   status: { type: String, enum: ["active", "inactive"], default: "inactive" },
