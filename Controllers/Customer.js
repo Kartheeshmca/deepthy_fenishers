@@ -242,43 +242,38 @@ export const createCustomerDetails = async (req, res) => {
     });
   }
 };
-
-/* ============================================================================
-   GET ALL CUSTOMER DETAILS (WITH PAGINATION + SEARCH)
-============================================================================ */
 export const getAllCustomerDetails = async (req, res) => {
   try {
-    let { page = 1, limit = 10, search = "" } = req.query;
-    page = parseInt(page);
-    limit = parseInt(limit);
+    let { search = "" } = req.query;
 
-    const query = {
-      $or: [
-        { companyName: { $regex: search, $options: "i" } },
-        { customerName: { $regex: search, $options: "i" } },
-        { receiverNo: { $regex: search, $options: "i" } },
-      ],
-    };
+    let query = {};
 
-    const total = await CustomerDetails.countDocuments(search ? query : {});
-    const data = await CustomerDetails.find(search ? query : {})
-      .skip((page - 1) * limit)
-      .limit(limit)
+    if (search) {
+      query = {
+        $or: [
+          { companyName: { $regex: search, $options: "i" } },
+          { customerName: { $regex: search, $options: "i" } },
+          { receiverNo: { $regex: search, $options: "i" } },
+        ],
+      };
+    }
+
+    const data = await CustomerDetails.find(query)
       .sort({ date: -1 });
 
     return res.status(200).json({
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
+      total: data.length,
       data,
     });
+
   } catch (error) {
     console.error("Get all error:", error);
-    return res.status(500).json({ message: "Server Error", error: error.message });
+    return res.status(500).json({
+      message: "Server Error",
+      error: error.message,
+    });
   }
 };
-
 /* ============================================================================
    GET CUSTOMER DETAIL BY ID
 ============================================================================ */
