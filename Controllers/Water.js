@@ -114,7 +114,7 @@ ${config.emoji} *${action}* ${config.emoji}
 // Helper: Send Notification
 export const startWaterProcess = async (req, res) => {
   try {
-    const { receiverNo, openingReading,startTimeFormattedFE } = req.body;
+    const { receiverNo, openingReading, startTimeFormattedFE } = req.body;
     const userName = req.user?.name || "System";
 
     if (!receiverNo) {
@@ -317,8 +317,9 @@ export const stopWaterProcess = async (req, res) => {
     water.status = "Stopped";
     water.endTime = now;
     water.endTimeFormatted = endTimeFormattedFE;
-
-    // ⭐ IMPORTANT: reset startTime to prevent double-stop issues
+    water.endDate = new Date(
+         now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+    ).toISOString().split("T")[0];
     water.startTime = null;
 
     addWaterHistory(
@@ -336,7 +337,8 @@ export const stopWaterProcess = async (req, res) => {
         { receiverNo: water.receiverNo },
         {
           status: "Stopped",
-          runningTime: water.runningTime
+          runningTime: water.runningTime,
+          endDate: water.endDate
         }
       );
     }
@@ -349,7 +351,8 @@ export const stopWaterProcess = async (req, res) => {
 
     return res.status(200).json({
       message: "Water process stopped successfully",
-      water
+      startDate: water.date,
+      endDate: water.endDate,
     });
 
   } catch (error) {
@@ -553,6 +556,10 @@ export const getLatestProcessPerMachine = async (req, res) => {
         startTimeFormatted: process.startTimeFormatted || "-",
         endTimeFormatted: process.endTimeFormatted || "-",
         remarks: process.remarks || "-",
+        // ✅ DATES
+        startDate: process.date || "-",        // already existing (start date)
+        endDate: process.endDate || "-",       // added end date
+
 
         updatedAt: process.updatedAt,
         createdAt: process.createdAt
