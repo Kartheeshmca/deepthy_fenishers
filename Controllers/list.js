@@ -221,7 +221,7 @@ export const reProcessFabricWithWaterCost = async (req, res) => {
         🔁 Update old job status + history
     ============================================================= */
     await listProcess.findByIdAndUpdate(previous._id, {
-      status: "Re-Completed",
+      status: "Reprocess-Completed",
       $push: {
         history: {
           action: "Re-Process Started",
