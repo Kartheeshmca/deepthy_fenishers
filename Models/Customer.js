@@ -10,7 +10,10 @@ const customerDetailsSchema = new mongoose.Schema({
   dia: { type: String, trim: true },
   roll: { type: Number, min: 0 },
   weight: { type: Number, min: 0, required: true },
-
+fabricStatus: {
+    type: String,
+    default: "Not Started"
+  },
   // ✔ Manual Date Entry
   date: { type: Date, required: true },
 
