@@ -1,4 +1,5 @@
 import CustomerDetails from "../Models/Customer.js";
+import listProcess from "../Models/list.js";
 
 // export const createCustomerDetails = async (req, res) => {
 //   try {
@@ -247,7 +248,6 @@ export const getAllCustomerDetails = async (req, res) => {
     let { search = "" } = req.query;
 
     let query = {};
-
     if (search) {
       query = {
         $or: [
@@ -258,8 +258,27 @@ export const getAllCustomerDetails = async (req, res) => {
       };
     }
 
-    const data = await CustomerDetails.find(query)
-      .sort({ date: -1 });
+    const customers = await CustomerDetails.find(query)
+      .sort({ date: -1 })
+      .lean();
+
+    const data = await Promise.all(
+      customers.map(async (cust) => {
+        const latestProcess = await listProcess
+          .findOne({ receiverNo: cust.receiverNo })
+          .sort({ createdAt: -1 })
+          .select("status")
+          .lean();
+
+        return {
+          ...cust,
+          fabricStatus:
+            latestProcess?.status ||   // live
+            cust.fabricStatus ||       // stored
+            "Not Started"
+        };
+      })
+    );
 
     return res.status(200).json({
       total: data.length,
@@ -267,16 +286,12 @@ export const getAllCustomerDetails = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Get all error:", error);
     return res.status(500).json({
       message: "Server Error",
       error: error.message,
     });
   }
 };
-/* ============================================================================
-   GET CUSTOMER DETAIL BY ID
-============================================================================ */
 export const getCustomerByReceiver = async (req, res) => {
   try {
     const { receiverNo } = req.params;
