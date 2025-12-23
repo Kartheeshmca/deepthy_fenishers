@@ -572,10 +572,10 @@ export const deleteFabricProcess = async (req, res) => {
     const receiverNo = fabric.receiverNo;
     const operator = fabric.operator;
     const order = fabric.order;
-
-    // ------------------------------------
-    // 🔥 REMOVE ASSIGNMENTS FROM OPERATORS
-    // ------------------------------------
+await CustomerDetails.updateOne(
+      { receiverNo },
+      { $set: { fabricStatus: "Completed" } }
+    );
     await User.updateMany(
       {},
       { $pull: { assignedFabrics: { receiverNo } } }
