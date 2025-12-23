@@ -52,7 +52,7 @@ const userSchema = new mongoose.Schema({
   phone: { type: String, match: [/^\d{10}$/] },
   password: { type: String, required: true },
   role: { type: String, enum: ["owner", "admin", "shiftincharge", "operator"], default: "operator" },
-  status: { type: String, enum: ["active", "inactive"], default: "inactive" },
+  status: { type: String, enum: ["active", "inactive"], default: "active" },
 
   // ⭐ IMPORTANT FIELD
   assignedFabrics: { type: [assignedFabricSchema], default: [] },
