@@ -32,7 +32,8 @@ export const createOwner = async (req, res) => {
       return res.status(400).json({ message: "Owner with same name and phone already exists" });
 
     const pwd = password || generateAutoPassword(name, phone);
-    const owner = new User({ name, phone, password: pwd, role: "owner" });
+    const owner = new User({ name, phone, password: pwd, role: "owner", status: "active"
+});
 
     // Log creation activity
 
@@ -53,6 +54,7 @@ export const createOwner = async (req, res) => {
 
 export const createUser = async (req, res) => {
   try {
+
     const { name, phone, password, role } = req.body;
     const requesterRole = req.user.role;
     // Validation
@@ -69,7 +71,13 @@ export const createUser = async (req, res) => {
       return res.status(403).json({ message: "Operator cannot create users" });
 
     const pwd = password || generateAutoPassword(name, phone);
-    const user = new User({ name, phone, password: pwd, role });
+const user = new User({
+  name,
+  phone,
+  password: pwd,
+  role,
+  status: "active",   // ✅ default active
+});
 
     // Log creation activity
     
