@@ -351,6 +351,7 @@ export const stopWaterProcess = async (req, res) => {
 
     return res.status(200).json({
       message: "Water process stopped successfully",
+      water,
       startDate: water.date,
       endDate: water.endDate,
     });
