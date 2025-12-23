@@ -29,6 +29,9 @@ const waterProcessSchema = new mongoose.Schema({
     type: String, 
     default: () => new Date().toISOString().split('T')[0] 
   },
+  endDate: { 
+  type: String 
+},
   time: {
     type: String,
     default: () => new Date().toLocaleTimeString('en-GB', { hour12: false })
