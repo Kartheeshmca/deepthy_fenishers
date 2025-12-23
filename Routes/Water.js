@@ -20,7 +20,7 @@ router.post(
   startWaterProcess
 );
 // Pause Water Process → Operator, Staff, Admin
-router.patch(
+router.post(
   "/pause/:id",
   protect,
   roleCheck(["operator","owner","admin"]),
