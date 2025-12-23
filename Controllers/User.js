@@ -107,6 +107,12 @@ export const login = async (req, res) => {
         { name: { $regex: new RegExp("^" + identifier.trim() + "$", "i") } },
       ],
     });
+      // 🔥 BLOCK INACTIVE USERS
+    if (user.status === "inactive") {
+      return res.status(403).json({
+        message: "Account is inactive. Please contact admin."
+      });
+    }
 
     if (!user || !user.comparePassword(password))
       return res.status(401).json({ message: "Invalid credentials" });
