@@ -108,15 +108,15 @@ export const login = async (req, res) => {
       ],
     });
       // 🔥 BLOCK INACTIVE USERS
-    if (user.status === "inactive") {
+    
+
+    if (!user || !user.comparePassword(password))
+      return res.status(401).json({ message: "Invalid credentials" });
+if (user.status === "inactive") {
       return res.status(403).json({
         message: "Account is inactive. Please contact admin."
       });
     }
-
-    if (!user || !user.comparePassword(password))
-      return res.status(401).json({ message: "Invalid credentials" });
-
     const token = jwt.sign(
       { id: user._id, role: user.role, name: user.name },
       process.env.JWT_SECRET || "tempSecret",
@@ -381,12 +381,16 @@ export const updateUser = async (req, res) => {
     if (requester.role === "operator" && requester.id !== target._id.toString())
       return res.status(403).json({ message: "Operator can update only self" });
 
-    const { name, phone, password, role } = req.body;
+    const { name, phone, password, role,status } = req.body;
     const changes = [];
 
     if (name && name !== target.name) { changes.push(`name updated`); target.name = name; }
     if (phone && phone !== target.phone) { changes.push(`phone updated`); target.phone = phone; }
     if (password) { changes.push("password updated"); target.password = password; }
+  if (status && status !== target.status) {
+      target.status = status;
+      changes.push("status");
+    }
 
     if (role && role !== target.role) {
       if (requester.role !== "owner") 
